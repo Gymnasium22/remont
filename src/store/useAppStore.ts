@@ -276,6 +276,10 @@ export const useAppStore = create<AppState>((set, get) => {
     addEstimateItem: (item) => {
       const now = new Date().toISOString();
       const zoneIds = getItemZoneIds(item);
+      const selfDonePercent = Math.min(
+        100,
+        Math.max(0, Number(item.selfDonePercent) || 0),
+      );
       apply({
         estimateItems: [
           ...get().estimateItems,
@@ -283,6 +287,7 @@ export const useAppStore = create<AppState>((set, get) => {
             ...item,
             zoneIds,
             zoneId: zoneIds[0],
+            selfDonePercent,
             id: uid(),
             createdAt: now,
             updatedAt: now,
@@ -296,7 +301,11 @@ export const useAppStore = create<AppState>((set, get) => {
           if (i.id !== id) return i;
           const next = { ...i, ...patch, updatedAt: new Date().toISOString() };
           const zoneIds = getItemZoneIds(next);
-          return { ...next, zoneIds, zoneId: zoneIds[0] };
+          const selfDonePercent = Math.min(
+            100,
+            Math.max(0, Number(next.selfDonePercent) || 0),
+          );
+          return { ...next, zoneIds, zoneId: zoneIds[0], selfDonePercent };
         }),
       });
     },
@@ -327,6 +336,7 @@ export const useAppStore = create<AppState>((set, get) => {
             id: uid(),
             name: `${item.name} (копия)`,
             progress: 0,
+            selfDonePercent: 0,
             createdAt: now,
             updatedAt: now,
           },
@@ -382,7 +392,15 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       const estimateItems = (data.estimateItems ?? []).map((item) => {
         const zoneIds = getItemZoneIds(item);
-        return { ...item, zoneIds, zoneId: zoneIds[0] };
+        return {
+          ...item,
+          zoneIds,
+          zoneId: zoneIds[0],
+          selfDonePercent: Math.min(
+            100,
+            Math.max(0, Number(item.selfDonePercent) || 0),
+          ),
+        };
       });
       const expenses = (data.expenses ?? []).map((e) => normalizeExpense(e));
       set({

@@ -35,3 +35,25 @@ export function formatZoneNames(
     .map((id) => zones.find((z) => z.id === id)?.name ?? '—')
     .join(' + ');
 }
+
+/** Плановая стоимость позиции */
+export function itemPlan(
+  item: Pick<EstimateItem, 'quantity' | 'unitPrice'>,
+): number {
+  return item.quantity * item.unitPrice;
+}
+
+/** Экономия: работа своими силами */
+export function itemDiyEconomy(
+  item: Pick<EstimateItem, 'quantity' | 'unitPrice' | 'selfDonePercent'>,
+): number {
+  const pct = Math.min(100, Math.max(0, item.selfDonePercent ?? 0));
+  return (itemPlan(item) * pct) / 100;
+}
+
+/** Сколько ещё «ожидается» к оплате наёмным (план минус DIY) */
+export function itemExpectedPaid(
+  item: Pick<EstimateItem, 'quantity' | 'unitPrice' | 'selfDonePercent'>,
+): number {
+  return Math.max(0, itemPlan(item) - itemDiyEconomy(item));
+}

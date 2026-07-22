@@ -31,7 +31,13 @@ import {
   expenseZoneShare,
   getExpenseZoneIds,
 } from '../lib/expense';
-import { itemHasZone, zoneShare } from '../lib/zones';
+import {
+  itemDiyEconomy,
+  itemExpectedPaid,
+  itemHasZone,
+  itemPlan,
+  zoneShare,
+} from '../lib/zones';
 import { useAppStore } from '../store/useAppStore';
 import { PAYMENT_LABELS } from '../types';
 
@@ -42,14 +48,22 @@ export function DashboardPage() {
   const estimateItems = useAppStore((s) => s.estimateItems);
   const expenses = useAppStore((s) => s.expenses);
 
-  const plan = estimateItems.reduce(
-    (sum, i) => sum + i.quantity * i.unitPrice,
+  const plan = estimateItems.reduce((sum, i) => sum + itemPlan(i), 0);
+  const fact = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const diyEconomy = estimateItems.reduce(
+    (sum, i) => sum + itemDiyEconomy(i),
     0,
   );
-  const fact = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const expectedPaid = estimateItems.reduce(
+    (sum, i) => sum + itemExpectedPaid(i),
+    0,
+  );
   const budget = project.totalBudget || plan;
+  /** Остаток бюджета с учётом экономии своими силами */
   const remain = budget - fact;
   const overspend = fact > budget ? fact - budget : 0;
+  /** Сколько ещё «не закрыто» по смете: ожидаемые оплаты − факт (не ниже 0) */
+  const planGap = Math.max(0, expectedPaid - fact);
 
   const activeZones = zones.filter((z) => project.activeZones.includes(z.id));
 
@@ -117,12 +131,13 @@ export function DashboardPage() {
 
   const overspends = estimateItems
     .map((item) => {
-      const p = item.quantity * item.unitPrice;
+      const p = itemExpectedPaid(item);
+      const full = itemPlan(item);
       const f = expenses.reduce(
         (s, e) => s + expenseEstimateShare(e, item.id),
         0,
       );
-      return { item, plan: p, fact: f, diff: f - p };
+      return { item, plan: p, full, fact: f, diff: f - p };
     })
     .filter((x) => x.diff > 0)
     .sort((a, b) => b.diff - a.diff)
@@ -154,7 +169,7 @@ export function DashboardPage() {
       />
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <KpiCard
           label="План"
           value={formatBr(plan)}
@@ -168,11 +183,27 @@ export function DashboardPage() {
           tone="blue"
         />
         <KpiCard
+          label="Своими силами"
+          value={formatBr(diyEconomy)}
+          hint={
+            diyEconomy > 0
+              ? `Не платим наёмным · к оплате ${formatBr(expectedPaid)}`
+              : 'Отметьте DIY в смете'
+          }
+          tone="green"
+        />
+        <KpiCard
           label={remain >= 0 ? 'Остаток' : 'Минус'}
           value={formatBr(Math.abs(remain))}
           hint={budget ? `Бюджет ${formatBr(budget)}` : 'от плана/бюджета'}
           tone={remain >= 0 ? 'green' : 'red'}
           icon={remain >= 0 ? ArrowDownRight : ArrowUpRight}
+        />
+        <KpiCard
+          label="Ещё к оплате"
+          value={formatBr(planGap)}
+          hint="План без DIY − факт"
+          tone={planGap > 0 ? 'neutral' : 'green'}
         />
         <KpiCard
           label="Перерасход"
@@ -182,6 +213,21 @@ export function DashboardPage() {
           icon={TrendingDown}
         />
       </div>
+
+      {diyEconomy > 0 && (
+        <Card className="border-emerald-500/30 bg-emerald-500/5">
+          <CardContent className="p-4 text-sm">
+            <p className="font-medium text-emerald-700 dark:text-emerald-400">
+              Экономия своими силами: {formatBr(diyEconomy)}
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Из плана {formatBr(plan)} вы закрыли {formatBr(diyEconomy)} без
+              оплаты наёмным. К ожидаемым платежам: {formatBr(expectedPaid)},
+              уже потрачено: {formatBr(fact)}.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Active zones */}
       <Card>
@@ -379,7 +425,10 @@ export function DashboardPage() {
                     <div className="min-w-0">
                       <p className="truncate font-medium">{item.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        план {formatBr(p)} · факт {formatBr(f)}
+                        к оплате {formatBr(p)} · факт {formatBr(f)}
+                        {(item.selfDonePercent ?? 0) > 0
+                          ? ` · DIY ${item.selfDonePercent}%`
+                          : ''}
                       </p>
                     </div>
                     <Badge variant="danger">+{formatBr(diff)}</Badge>

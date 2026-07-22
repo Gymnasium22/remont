@@ -27,10 +27,15 @@ function getDb() {
 function normalizeData(raw: AppData): AppData {
   const estimateItems = (raw.estimateItems ?? []).map((item) => {
     const zoneIds = getItemZoneIds(item as EstimateItem);
+    const rawItem = item as EstimateItem;
     return {
-      ...item,
+      ...rawItem,
       zoneIds,
       zoneId: zoneIds[0],
+      selfDonePercent: Math.min(
+        100,
+        Math.max(0, Number(rawItem.selfDonePercent) || 0),
+      ),
     } as EstimateItem;
   });
   const expenses = (raw.expenses ?? []).map((e) => normalizeExpense(e));

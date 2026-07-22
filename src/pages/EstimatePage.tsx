@@ -39,7 +39,10 @@ import { cn } from '../lib/utils';
 import {
   formatZoneNames,
   getItemZoneIds,
+  itemDiyEconomy,
+  itemExpectedPaid,
   itemHasZone,
+  itemPlan,
 } from '../lib/zones';
 import { selectItemFact, useAppStore } from '../store/useAppStore';
 import type { EstimateItem } from '../types';
@@ -54,6 +57,7 @@ type FormState = {
   unit: string;
   unitPrice: string;
   progress: string;
+  selfDonePercent: string;
   note: string;
 };
 
@@ -70,6 +74,7 @@ const emptyForm = (
   unit: 'шт',
   unitPrice: '',
   progress: '0',
+  selfDonePercent: '0',
   note: '',
 });
 
@@ -180,6 +185,7 @@ export function EstimatePage() {
       unit: item.unit,
       unitPrice: String(item.unitPrice),
       progress: String(item.progress),
+      selfDonePercent: String(item.selfDonePercent ?? 0),
       note: item.note ?? '',
     });
     setOpen(true);
@@ -194,6 +200,13 @@ export function EstimatePage() {
       toast.error('Выберите хотя бы одну зону');
       return;
     }
+    const selfDonePercent = Math.min(
+      100,
+      Math.max(0, Number(form.selfDonePercent) || 0),
+    );
+    let progress = Math.min(100, Math.max(0, Number(form.progress) || 0));
+    // Если своими силами больше, чем отмеченный прогресс — подтягиваем прогресс
+    if (selfDonePercent > progress) progress = selfDonePercent;
     const payload = {
       name: form.name.trim(),
       zoneIds: form.zoneIds,
@@ -203,7 +216,8 @@ export function EstimatePage() {
       quantity: Number(form.quantity) || 0,
       unit: form.unit,
       unitPrice: Number(form.unitPrice) || 0,
-      progress: Math.min(100, Math.max(0, Number(form.progress) || 0)),
+      progress,
+      selfDonePercent,
       note: form.note.trim() || undefined,
     };
     if (editing) {
@@ -321,9 +335,12 @@ export function EstimatePage() {
               .filter(Boolean) as typeof zones;
             const cat = categories.find((c) => c.id === item.categoryId);
             const stage = stages.find((s) => s.id === item.stageId);
-            const plan = item.quantity * item.unitPrice;
+            const plan = itemPlan(item);
+            const diy = itemDiyEconomy(item);
+            const expected = itemExpectedPaid(item);
             const fact = selectItemFact(expenses, item.id);
-            const over = fact > plan && plan > 0;
+            const over = fact > expected && expected >= 0 && plan > 0;
+            const selfPct = item.selfDonePercent ?? 0;
             return (
               <Card key={item.id} className="overflow-hidden">
                 <CardContent className="p-4">
@@ -347,6 +364,11 @@ export function EstimatePage() {
                         )}
                         {cat && <Badge variant="secondary">{cat.name}</Badge>}
                         {stage && <Badge variant="secondary">{stage.name}</Badge>}
+                        {selfPct > 0 && (
+                          <Badge variant="success">
+                            Своими силами {selfPct}%
+                          </Badge>
+                        )}
                       </div>
                       <p className="mt-2 text-sm text-muted-foreground">
                         {item.quantity} {item.unit} × {formatBr(item.unitPrice)}{' '}
@@ -354,6 +376,15 @@ export function EstimatePage() {
                         <span className="font-semibold text-foreground">
                           {formatBr(plan)}
                         </span>
+                        {diy > 0 && (
+                          <>
+                            {' '}
+                            · экономия{' '}
+                            <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                              {formatBr(diy)}
+                            </span>
+                          </>
+                        )}
                         {fact > 0 && (
                           <>
                             {' '}
@@ -363,6 +394,12 @@ export function EstimatePage() {
                             >
                               {formatBr(fact)}
                             </span>
+                            {selfPct > 0 && (
+                              <span className="text-muted-foreground">
+                                {' '}
+                                / к оплате {formatBr(expected)}
+                              </span>
+                            )}
                           </>
                         )}
                       </p>
@@ -534,15 +571,73 @@ export function EstimatePage() {
                 )}
               </strong>
             </p>
-            <div className="grid gap-1.5">
-              <Label>Выполнение, %</Label>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={form.progress}
-                onChange={(e) => setForm({ ...form, progress: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label>Выполнение, %</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.progress}
+                  onChange={(e) =>
+                    setForm({ ...form, progress: e.target.value })
+                  }
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Своими силами, %</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.selfDonePercent}
+                  onChange={(e) =>
+                    setForm({ ...form, selfDonePercent: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              «Своими силами» — работы, которые вы сделали сами, а не нанятые
+              мастера. Это считается экономией (не нужно платить по смете).
+              {(() => {
+                const p =
+                  (Number(form.quantity) || 0) * (Number(form.unitPrice) || 0);
+                const diy =
+                  (p *
+                    Math.min(
+                      100,
+                      Math.max(0, Number(form.selfDonePercent) || 0),
+                    )) /
+                  100;
+                return diy > 0
+                  ? ` Экономия сейчас: ${formatBr(diy)}.`
+                  : '';
+              })()}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setForm({
+                    ...form,
+                    selfDonePercent: '100',
+                    progress: '100',
+                  })
+                }
+              >
+                Полностью сами
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setForm({ ...form, selfDonePercent: '0' })}
+              >
+                Сбросить DIY
+              </Button>
             </div>
             <div className="grid gap-1.5">
               <Label>Заметка</Label>

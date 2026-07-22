@@ -53,8 +53,13 @@ export interface EstimateItem {
   quantity: number;
   unit: string;
   unitPrice: number;
-  /** 0–100 */
+  /** 0–100 — общий прогресс выполнения */
   progress: number;
+  /**
+   * 0–100 — доля работы, сделанной своими силами (не нанятыми).
+   * Даёт «экономию» = план × selfDonePercent / 100.
+   */
+  selfDonePercent: number;
   note?: string;
   createdAt: string;
   updatedAt: string;
