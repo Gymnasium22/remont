@@ -73,10 +73,11 @@ export function DashboardPage() {
     (sum, i) => sum + itemExpectedPaid(i),
     0,
   );
-  const budget = project.totalBudget || plan;
-  /** Остаток общего бюджета (все траты) */
+  const hasBudget = project.totalBudget > 0;
+  const budget = hasBudget ? project.totalBudget : plan;
+  /** Остаток: от бюджета, если задан; иначе план сметы − все траты */
   const remain = budget - fact;
-  const overspend = fact > budget ? fact - budget : 0;
+  const overspend = fact > budget && budget > 0 ? fact - budget : 0;
   /** Ещё к оплате по смете: план−DIY − только расходы «по смете» */
   const planGap = Math.max(0, expectedPaid - factOnEstimate);
 
@@ -175,7 +176,7 @@ export function DashboardPage() {
             <Button asChild size="sm" variant="outline">
               <Link to="/expenses">
                 <Plus className="h-4 w-4" />
-                Расход
+                К расходам
               </Link>
             </Button>
           </div>

@@ -16,7 +16,7 @@ const nav = [
   { to: '/estimate', label: 'Смета', icon: ClipboardList },
   { to: '/expenses', label: 'Расходы', icon: Receipt },
   { to: '/contractors', label: 'Люди', icon: Users },
-  { to: '/settings', label: 'Ещё', icon: Settings },
+  { to: '/settings', label: 'Настройки', icon: Settings },
 ];
 
 export function AppShell() {

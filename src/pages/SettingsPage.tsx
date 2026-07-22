@@ -100,8 +100,9 @@ export function SettingsPage() {
         </CardHeader>
         <CardContent className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label>Название</Label>
+            <Label htmlFor="project-name">Название</Label>
             <Input
+              id="project-name"
               value={project.name}
               onChange={(e) => updateProject({ name: e.target.value })}
               placeholder="Квартира на Независимости"
@@ -109,16 +110,18 @@ export function SettingsPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
-              <Label>Дата начала</Label>
+              <Label htmlFor="project-start">Дата начала</Label>
               <Input
+                id="project-start"
                 type="date"
                 value={project.startDate}
                 onChange={(e) => updateProject({ startDate: e.target.value })}
               />
             </div>
             <div className="grid gap-1.5">
-              <Label>Бюджет, Br</Label>
+              <Label htmlFor="project-budget">Бюджет, Br</Label>
               <Input
+                id="project-budget"
                 type="number"
                 inputMode="decimal"
                 value={project.totalBudget || ''}

@@ -77,21 +77,27 @@ type FormState = {
 
 const emptyForm = (
   zones: { id: string }[],
-  cats: { id: string }[],
-  stages: { id: string }[],
-): FormState => ({
-  name: '',
-  zoneIds: zones[0]?.id ? [zones[0].id] : [],
-  categoryId: cats[0]?.id ?? '',
-  stageId: stages[0]?.id ?? '',
-  quantity: '1',
-  unit: 'шт',
-  unitPrice: '',
-  progress: '0',
-  selfDonePercent: '0',
-  extras: [],
-  note: '',
-});
+  cats: { id: string; name: string }[],
+  stages: { id: string; name: string }[],
+): FormState => {
+  const works =
+    cats.find((c) => /работ/i.test(c.name))?.id ?? cats[0]?.id ?? '';
+  const stage =
+    stages.find((s) => /чернов/i.test(s.name))?.id ?? stages[0]?.id ?? '';
+  return {
+    name: '',
+    zoneIds: zones[0]?.id ? [zones[0].id] : [],
+    categoryId: works,
+    stageId: stage,
+    quantity: '1',
+    unit: 'шт',
+    unitPrice: '',
+    progress: '0',
+    selfDonePercent: '0',
+    extras: [],
+    note: '',
+  };
+};
 
 function emptyExtra(): ExtraForm {
   return {

@@ -49,10 +49,12 @@ export default function App() {
         richColors
         closeButton
         theme="system"
+        offset={16}
         toastOptions={{
           classNames: {
-            toast: 'rounded-2xl border border-border shadow-lg',
+            toast: 'rounded-2xl border border-border shadow-lg z-[100]',
           },
+          duration: 2800,
         }}
       />
     </Router>
