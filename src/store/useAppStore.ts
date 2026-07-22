@@ -20,7 +20,7 @@ import {
 } from '../lib/expense';
 import { clearAppData, loadAppData, saveAppData } from '../lib/idb';
 import { todayISO, uid } from '../lib/utils';
-import { getItemZoneIds } from '../lib/zones';
+import { getItemZoneIds, itemPlan } from '../lib/zones';
 
 interface AppState extends AppData {
   hydrated: boolean;
@@ -451,11 +451,35 @@ export function selectFactTotal(s: AppData): number {
 }
 
 export function selectItemPlan(item: EstimateItem): number {
-  return item.quantity * item.unitPrice;
+  return itemPlan(item);
 }
 
-export function selectItemFact(expenses: Expense[], itemId: string): number {
-  return expenses.reduce((s, e) => s + expenseEstimateShare(e, itemId), 0);
+/** Карта план по id позиций (для пропорционального разнесения расходов) */
+export function buildPlanByItemId(
+  estimateItems: EstimateItem[],
+): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const it of estimateItems) {
+    map[it.id] = itemPlan(it);
+  }
+  return map;
+}
+
+/**
+ * Факт по позиции: расходы, привязанные к ней.
+ * Если в одном расходе несколько позиций — сумма делится
+ * пропорционально плану (не поровну).
+ */
+export function selectItemFact(
+  expenses: Expense[],
+  itemId: string,
+  estimateItems: EstimateItem[],
+): number {
+  const planByItemId = buildPlanByItemId(estimateItems);
+  return expenses.reduce(
+    (s, e) => s + expenseEstimateShare(e, itemId, planByItemId),
+    0,
+  );
 }
 
 export { todayISO };

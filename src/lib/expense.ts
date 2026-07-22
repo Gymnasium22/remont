@@ -120,14 +120,52 @@ export function expenseCategoryShare(
   return e.amount / ids.length;
 }
 
-/** Доля суммы на позицию сметы */
+/**
+ * Распределить сумму расхода по позициям сметы пропорционально плану.
+ * Так аванс 615 на позиции 711 и 120 даёт ~526 + ~89, а не 307.5 + 307.5.
+ */
+export function allocateExpenseByPlan(
+  amount: number,
+  itemIds: string[],
+  planByItemId: Record<string, number>,
+): Record<string, number> {
+  if (itemIds.length === 0) return {};
+  if (itemIds.length === 1) return { [itemIds[0]]: amount };
+
+  const weights = itemIds.map((id) => Math.max(0, planByItemId[id] ?? 0));
+  const totalW = weights.reduce((a, b) => a + b, 0);
+
+  if (totalW <= 0) {
+    const each = amount / itemIds.length;
+    return Object.fromEntries(itemIds.map((id) => [id, each]));
+  }
+
+  const result: Record<string, number> = {};
+  let allocated = 0;
+  for (let i = 0; i < itemIds.length; i++) {
+    if (i === itemIds.length - 1) {
+      // остаток копеек — последней позиции, чтобы сумма сходилась
+      result[itemIds[i]] = Math.round((amount - allocated) * 100) / 100;
+    } else {
+      const share =
+        Math.round(((amount * weights[i]) / totalW) * 100) / 100;
+      result[itemIds[i]] = share;
+      allocated += share;
+    }
+  }
+  return result;
+}
+
+/** Доля суммы расхода на позицию сметы (пропорционально плану) */
 export function expenseEstimateShare(
   e: Pick<Expense, 'estimateItemIds' | 'estimateItemId' | 'amount'>,
   itemId: string,
+  planByItemId: Record<string, number>,
 ): number {
   const ids = getExpenseEstimateIds(e);
   if (!ids.includes(itemId) || ids.length === 0) return 0;
-  return e.amount / ids.length;
+  const alloc = allocateExpenseByPlan(e.amount, ids, planByItemId);
+  return alloc[itemId] ?? 0;
 }
 
 export function normalizeExpense(e: Expense): Expense {

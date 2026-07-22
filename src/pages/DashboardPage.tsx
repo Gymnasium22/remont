@@ -39,7 +39,7 @@ import {
   itemPlan,
   zoneShare,
 } from '../lib/zones';
-import { useAppStore } from '../store/useAppStore';
+import { buildPlanByItemId, useAppStore } from '../store/useAppStore';
 import { PAYMENT_LABELS } from '../types';
 
 export function DashboardPage() {
@@ -128,12 +128,13 @@ export function DashboardPage() {
     transfer: '#a855f7',
   };
 
+  const planByItemId = buildPlanByItemId(estimateItems);
   const overspends = estimateItems
     .map((item) => {
       const p = itemExpectedPaid(item);
       const full = itemPlan(item);
       const f = expenses.reduce(
-        (s, e) => s + expenseEstimateShare(e, item.id),
+        (s, e) => s + expenseEstimateShare(e, item.id, planByItemId),
         0,
       );
       return { item, plan: p, full, fact: f, diff: f - p };

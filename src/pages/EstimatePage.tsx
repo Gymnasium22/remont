@@ -385,7 +385,7 @@ export function EstimatePage() {
             const extrasPlan = itemExtrasPlan(item);
             const diy = itemDiyEconomy(item);
             const expected = itemExpectedPaid(item);
-            const fact = selectItemFact(expenses, item.id);
+            const fact = selectItemFact(expenses, item.id, items);
             const remain = itemRemaining(item, fact);
             const over = fact > expected && expected >= 0 && plan > 0;
             const selfPct = item.selfDonePercent ?? 0;

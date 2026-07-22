@@ -246,7 +246,7 @@ export function ExpensesPage() {
       .map((id) => {
         const item = estimateItems.find((i) => i.id === id);
         if (!item) return null;
-        const fact = selectItemFact(expenses, id);
+        const fact = selectItemFact(expenses, id, estimateItems);
         const plan = itemPlan(item);
         const expected = itemExpectedPaid(item);
         const remain = itemRemaining(item, fact);
@@ -329,14 +329,14 @@ export function ExpensesPage() {
       const remainSum = nextIds.reduce((s, xid) => {
         const item = estimateItems.find((i) => i.id === xid);
         if (!item) return s;
-        return s + itemRemaining(item, selectItemFact(expenses, xid));
+        return s + itemRemaining(item, selectItemFact(expenses, xid, estimateItems));
       }, 0);
 
       // Автосумма, если оплату ещё не трогали или она совпадала с прошлым остатком
       const prevRemain = f.estimateItemIds.reduce((s, xid) => {
         const item = estimateItems.find((i) => i.id === xid);
         if (!item) return s;
-        return s + itemRemaining(item, selectItemFact(expenses, xid));
+        return s + itemRemaining(item, selectItemFact(expenses, xid, estimateItems));
       }, 0);
       const prevPartsTotal = paymentPartsTotal(formToPaymentParts(f));
       const amountWasAuto =
@@ -708,7 +708,7 @@ export function ExpensesPage() {
                 <CheckList
                   maxHeightClass="max-h-[min(40dvh,280px)]"
                   items={estimateItems.map((i) => {
-                    const fact = selectItemFact(expenses, i.id);
+                    const fact = selectItemFact(expenses, i.id, estimateItems);
                     const remain = itemRemaining(i, fact);
                     return {
                       id: i.id,
