@@ -31,7 +31,7 @@ $env:VITE_BASE="/remont/"; npm run build
 VITE_BASE=/remont/ npm run build
 ```
 
-Репозиторий: https://github.com/stasevichnikita0505-afk/remont
+Репозиторий: https://github.com/Gymnasium22/remont
 
 3. Залейте содержимое `dist/` в ветку `gh-pages` (или используйте action `peaceiris/actions-gh-pages`).
 
