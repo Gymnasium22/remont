@@ -65,11 +65,26 @@ export interface Expense {
   date: string;
   amount: number;
   paymentMethod: PaymentMethod;
-  estimateItemId: string | null;
-  zoneId: string;
-  categoryId: string;
-  stageId: string;
-  contractorId: string | null;
+  /** Позиции сметы (можно несколько) */
+  estimateItemIds: string[];
+  /** @deprecated → estimateItemIds */
+  estimateItemId?: string | null;
+  /** Зоны (можно несколько) */
+  zoneIds: string[];
+  /** @deprecated → zoneIds */
+  zoneId?: string;
+  /** Категории (можно несколько) */
+  categoryIds: string[];
+  /** @deprecated → categoryIds */
+  categoryId?: string;
+  /** Этапы (можно несколько) */
+  stageIds: string[];
+  /** @deprecated → stageIds */
+  stageId?: string;
+  /** Контрагенты (можно несколько) */
+  contractorIds: string[];
+  /** @deprecated → contractorIds */
+  contractorId?: string | null;
   comment: string;
   receiptPhoto: string | null;
   createdAt: string;

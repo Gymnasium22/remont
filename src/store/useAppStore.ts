@@ -11,6 +11,13 @@ import type {
   Zone,
 } from '../types';
 import { createDefaultData } from '../lib/defaults';
+import {
+  expenseEstimateShare,
+  getExpenseContractorIds,
+  getExpenseEstimateIds,
+  getExpenseZoneIds,
+  normalizeExpense,
+} from '../lib/expense';
 import { clearAppData, loadAppData, saveAppData } from '../lib/idb';
 import { todayISO, uid } from '../lib/utils';
 import { getItemZoneIds } from '../lib/zones';
@@ -134,6 +141,10 @@ export const useAppStore = create<AppState>((set, get) => {
           const zoneIds = getItemZoneIds(item).filter((z) => z !== id);
           return { ...item, zoneIds, zoneId: zoneIds[0] };
         }),
+        expenses: s.expenses.map((e) => {
+          const zoneIds = getExpenseZoneIds(e).filter((z) => z !== id);
+          return normalizeExpense({ ...e, zoneIds, zoneId: zoneIds[0] });
+        }),
       });
     },
 
@@ -176,9 +187,13 @@ export const useAppStore = create<AppState>((set, get) => {
         };
       });
 
-      const expenses = s.expenses.map((e) =>
-        idSet.has(e.zoneId) ? { ...e, zoneId: newId } : e,
-      );
+      const expenses = s.expenses.map((e) => {
+        const zids = getExpenseZoneIds(e);
+        if (!zids.some((id) => idSet.has(id))) return e;
+        const rest = zids.filter((id) => !idSet.has(id));
+        const zoneIds = [...new Set([newId, ...rest])];
+        return normalizeExpense({ ...e, zoneIds, zoneId: zoneIds[0] });
+      });
 
       const activeZones = [
         ...s.project.activeZones.filter((id) => !idSet.has(id)),
@@ -245,9 +260,16 @@ export const useAppStore = create<AppState>((set, get) => {
     removeContractor: (id) => {
       apply({
         contractors: get().contractors.filter((c) => c.id !== id),
-        expenses: get().expenses.map((e) =>
-          e.contractorId === id ? { ...e, contractorId: null } : e,
-        ),
+        expenses: get().expenses.map((e) => {
+          const contractorIds = getExpenseContractorIds(e).filter(
+            (x) => x !== id,
+          );
+          return normalizeExpense({
+            ...e,
+            contractorIds,
+            contractorId: contractorIds[0] ?? null,
+          });
+        }),
       });
     },
 
@@ -281,9 +303,16 @@ export const useAppStore = create<AppState>((set, get) => {
     removeEstimateItem: (id) => {
       apply({
         estimateItems: get().estimateItems.filter((i) => i.id !== id),
-        expenses: get().expenses.map((e) =>
-          e.estimateItemId === id ? { ...e, estimateItemId: null } : e,
-        ),
+        expenses: get().expenses.map((e) => {
+          const estimateItemIds = getExpenseEstimateIds(e).filter(
+            (x) => x !== id,
+          );
+          return normalizeExpense({
+            ...e,
+            estimateItemIds,
+            estimateItemId: estimateItemIds[0] ?? null,
+          });
+        }),
       });
     },
     duplicateEstimateItem: (id) => {
@@ -309,14 +338,18 @@ export const useAppStore = create<AppState>((set, get) => {
       apply({
         expenses: [
           ...get().expenses,
-          { ...e, id: uid(), createdAt: new Date().toISOString() },
+          normalizeExpense({
+            ...e,
+            id: uid(),
+            createdAt: new Date().toISOString(),
+          } as Expense),
         ],
       });
     },
     updateExpense: (id, patch) => {
       apply({
         expenses: get().expenses.map((e) =>
-          e.id === id ? { ...e, ...patch } : e,
+          e.id === id ? normalizeExpense({ ...e, ...patch }) : e,
         ),
       });
     },
@@ -351,6 +384,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const zoneIds = getItemZoneIds(item);
         return { ...item, zoneIds, zoneId: zoneIds[0] };
       });
+      const expenses = (data.expenses ?? []).map((e) => normalizeExpense(e));
       set({
         project: data.project,
         zones: data.zones ?? [],
@@ -358,7 +392,7 @@ export const useAppStore = create<AppState>((set, get) => {
         stages: data.stages ?? [],
         contractors: data.contractors ?? [],
         estimateItems,
-        expenses: data.expenses ?? [],
+        expenses,
         settings: data.settings ?? { theme: 'system' },
       });
       await persist();
@@ -390,9 +424,7 @@ export function selectItemPlan(item: EstimateItem): number {
 }
 
 export function selectItemFact(expenses: Expense[], itemId: string): number {
-  return expenses
-    .filter((e) => e.estimateItemId === itemId)
-    .reduce((s, e) => s + e.amount, 0);
+  return expenses.reduce((s, e) => s + expenseEstimateShare(e, itemId), 0);
 }
 
 export { todayISO };

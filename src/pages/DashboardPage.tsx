@@ -25,6 +25,12 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Progress } from '../components/ui/progress';
 import { formatBr } from '../lib/currency';
+import {
+  expenseCategoryShare,
+  expenseEstimateShare,
+  expenseZoneShare,
+  getExpenseZoneIds,
+} from '../lib/expense';
 import { itemHasZone, zoneShare } from '../lib/zones';
 import { useAppStore } from '../store/useAppStore';
 import { PAYMENT_LABELS } from '../types';
@@ -54,9 +60,10 @@ export function DashboardPage() {
         (s, i) => s + zoneShare(i, z.id),
         0,
       );
-      const factZ = expenses
-        .filter((e) => e.zoneId === z.id)
-        .reduce((s, e) => s + e.amount, 0);
+      const factZ = expenses.reduce(
+        (s, e) => s + expenseZoneShare(e, z.id),
+        0,
+      );
       const progress =
         items.length > 0
           ? items.reduce((s, i) => s + i.progress, 0) / items.length
@@ -71,9 +78,10 @@ export function DashboardPage() {
       const planC = estimateItems
         .filter((i) => i.categoryId === c.id)
         .reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-      const factC = expenses
-        .filter((e) => e.categoryId === c.id)
-        .reduce((s, e) => s + e.amount, 0);
+      const factC = expenses.reduce(
+        (s, e) => s + expenseCategoryShare(e, c.id),
+        0,
+      );
       return { cat: c, planC, factC };
     })
     .filter((x) => x.planC > 0 || x.factC > 0);
@@ -84,9 +92,10 @@ export function DashboardPage() {
         (s, i) => s + zoneShare(i, z.id),
         0,
       );
-      const factZ = expenses
-        .filter((e) => e.zoneId === z.id)
-        .reduce((s, e) => s + e.amount, 0);
+      const factZ = expenses.reduce(
+        (s, e) => s + expenseZoneShare(e, z.id),
+        0,
+      );
       return { name: z.name, plan: planZ, fact: factZ, color: z.color };
     })
     .filter((x) => x.plan > 0 || x.fact > 0)
@@ -109,9 +118,10 @@ export function DashboardPage() {
   const overspends = estimateItems
     .map((item) => {
       const p = item.quantity * item.unitPrice;
-      const f = expenses
-        .filter((e) => e.estimateItemId === item.id)
-        .reduce((s, e) => s + e.amount, 0);
+      const f = expenses.reduce(
+        (s, e) => s + expenseEstimateShare(e, item.id),
+        0,
+      );
       return { item, plan: p, fact: f, diff: f - p };
     })
     .filter((x) => x.diff > 0)
@@ -393,7 +403,10 @@ export function DashboardPage() {
             ) : (
               <ul className="space-y-3">
                 {recent.map((e) => {
-                  const zone = zones.find((z) => z.id === e.zoneId);
+                  const zoneNames = getExpenseZoneIds(e)
+                    .map((id) => zones.find((z) => z.id === id)?.name)
+                    .filter(Boolean)
+                    .join(', ');
                   return (
                     <li
                       key={e.id}
@@ -401,7 +414,7 @@ export function DashboardPage() {
                     >
                       <div className="min-w-0">
                         <p className="truncate font-medium">
-                          {e.comment || zone?.name || 'Расход'}
+                          {e.comment || zoneNames || 'Расход'}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {e.date} · {PAYMENT_LABELS[e.paymentMethod]}

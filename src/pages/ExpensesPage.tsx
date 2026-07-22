@@ -24,6 +24,7 @@ import {
 import { EmptyState } from '../components/ui/empty-state';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { MultiChips } from '../components/ui/multi-chips';
 import {
   Select,
   SelectContent,
@@ -33,6 +34,17 @@ import {
 } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { formatBr } from '../lib/currency';
+import {
+  expenseHasCategory,
+  expenseHasContractor,
+  expenseHasZone,
+  getExpenseCategoryIds,
+  getExpenseContractorIds,
+  getExpenseEstimateIds,
+  getExpenseStageIds,
+  getExpenseZoneIds,
+  toggleId,
+} from '../lib/expense';
 import { compressImage, formatDate } from '../lib/utils';
 import { getItemZoneIds } from '../lib/zones';
 import { todayISO, useAppStore } from '../store/useAppStore';
@@ -43,11 +55,11 @@ type FormState = {
   date: string;
   amount: string;
   paymentMethod: PaymentMethod;
-  estimateItemId: string;
-  zoneId: string;
-  categoryId: string;
-  stageId: string;
-  contractorId: string;
+  estimateItemIds: string[];
+  zoneIds: string[];
+  categoryIds: string[];
+  stageIds: string[];
+  contractorIds: string[];
   comment: string;
   receiptPhoto: string | null;
 };
@@ -61,11 +73,11 @@ function emptyForm(
     date: todayISO(),
     amount: '',
     paymentMethod: 'cash',
-    estimateItemId: 'none',
-    zoneId: zones[0]?.id ?? '',
-    categoryId: cats[0]?.id ?? '',
-    stageId: stages[0]?.id ?? '',
-    contractorId: 'none',
+    estimateItemIds: [],
+    zoneIds: zones[0]?.id ? [zones[0].id] : [],
+    categoryIds: cats[0]?.id ? [cats[0].id] : [],
+    stageIds: stages[0]?.id ? [stages[0].id] : [],
+    contractorIds: [],
     comment: '',
     receiptPhoto: null,
   };
@@ -103,24 +115,28 @@ export function ExpensesPage() {
     const q = search.trim().toLowerCase();
     return expenses
       .filter((e) => {
-        if (filterZone !== 'all' && e.zoneId !== filterZone) return false;
-        if (filterCat !== 'all' && e.categoryId !== filterCat) return false;
+        if (filterZone !== 'all' && !expenseHasZone(e, filterZone)) return false;
+        if (filterCat !== 'all' && !expenseHasCategory(e, filterCat))
+          return false;
         if (filterPay !== 'all' && e.paymentMethod !== filterPay) return false;
         if (filterContractor !== 'all') {
-          if (filterContractor === 'none' && e.contractorId) return false;
-          if (filterContractor !== 'none' && e.contractorId !== filterContractor)
-            return false;
+          if (!expenseHasContractor(e, filterContractor)) return false;
         }
         if (dateFrom && e.date < dateFrom) return false;
         if (dateTo && e.date > dateTo) return false;
         if (q) {
-          const item = estimateItems.find((i) => i.id === e.estimateItemId);
-          const hay = `${e.comment} ${item?.name ?? ''}`.toLowerCase();
+          const names = getExpenseEstimateIds(e)
+            .map((id) => estimateItems.find((i) => i.id === id)?.name ?? '')
+            .join(' ');
+          const hay = `${e.comment} ${names}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
       })
-      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+      .sort(
+        (a, b) =>
+          b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt),
+      );
   }, [
     expenses,
     search,
@@ -147,33 +163,41 @@ export function ExpensesPage() {
       date: e.date,
       amount: String(e.amount),
       paymentMethod: e.paymentMethod,
-      estimateItemId: e.estimateItemId ?? 'none',
-      zoneId: e.zoneId,
-      categoryId: e.categoryId,
-      stageId: e.stageId,
-      contractorId: e.contractorId ?? 'none',
+      estimateItemIds: getExpenseEstimateIds(e),
+      zoneIds: getExpenseZoneIds(e),
+      categoryIds: getExpenseCategoryIds(e),
+      stageIds: getExpenseStageIds(e),
+      contractorIds: getExpenseContractorIds(e),
       comment: e.comment,
       receiptPhoto: e.receiptPhoto,
     });
     setOpen(true);
   };
 
-  const onPickEstimate = (id: string) => {
-    if (id === 'none') {
-      setForm((f) => ({ ...f, estimateItemId: 'none' }));
-      return;
-    }
-    const item = estimateItems.find((i) => i.id === id);
-    if (!item) return;
-    const zids = getItemZoneIds(item);
-    setForm((f) => ({
-      ...f,
-      estimateItemId: id,
-      zoneId: zids[0] ?? f.zoneId,
-      categoryId: item.categoryId,
-      stageId: item.stageId,
-      comment: f.comment || item.name,
-    }));
+  const toggleEstimate = (id: string) => {
+    setForm((f) => {
+      const next = toggleId(f.estimateItemIds, id);
+      const added = !f.estimateItemIds.includes(id) && next.includes(id);
+      if (!added) return { ...f, estimateItemIds: next };
+
+      const item = estimateItems.find((i) => i.id === id);
+      if (!item) return { ...f, estimateItemIds: next };
+
+      const zids = getItemZoneIds(item);
+      return {
+        ...f,
+        estimateItemIds: next,
+        zoneIds: [...new Set([...f.zoneIds, ...zids])],
+        categoryIds: [...new Set([...f.categoryIds, item.categoryId].filter(Boolean))],
+        stageIds: [...new Set([...f.stageIds, item.stageId].filter(Boolean))],
+        comment:
+          f.comment ||
+          next
+            .map((xid) => estimateItems.find((i) => i.id === xid)?.name)
+            .filter(Boolean)
+            .join(', '),
+      };
+    });
   };
 
   const onPhoto = async (file: File | null) => {
@@ -193,17 +217,32 @@ export function ExpensesPage() {
       toast.error('Укажите сумму расхода');
       return;
     }
+    if (form.zoneIds.length === 0) {
+      toast.error('Выберите хотя бы одну зону');
+      return;
+    }
+    if (form.categoryIds.length === 0) {
+      toast.error('Выберите хотя бы одну категорию');
+      return;
+    }
+    if (form.stageIds.length === 0) {
+      toast.error('Выберите хотя бы один этап');
+      return;
+    }
     const payload = {
       date: form.date || todayISO(),
       amount,
       paymentMethod: form.paymentMethod,
-      estimateItemId:
-        form.estimateItemId === 'none' ? null : form.estimateItemId,
-      zoneId: form.zoneId,
-      categoryId: form.categoryId,
-      stageId: form.stageId,
-      contractorId:
-        form.contractorId === 'none' ? null : form.contractorId,
+      estimateItemIds: form.estimateItemIds,
+      estimateItemId: form.estimateItemIds[0] ?? null,
+      zoneIds: form.zoneIds,
+      zoneId: form.zoneIds[0],
+      categoryIds: form.categoryIds,
+      categoryId: form.categoryIds[0],
+      stageIds: form.stageIds,
+      stageId: form.stageIds[0],
+      contractorIds: form.contractorIds,
+      contractorId: form.contractorIds[0] ?? null,
       comment: form.comment.trim(),
       receiptPhoto: form.receiptPhoto,
     };
@@ -341,10 +380,12 @@ export function ExpensesPage() {
       {filtered.length === 0 ? (
         <EmptyState
           icon={Receipt}
-          title={expenses.length === 0 ? 'Расходов пока нет' : 'Ничего не найдено'}
+          title={
+            expenses.length === 0 ? 'Расходов пока нет' : 'Ничего не найдено'
+          }
           description={
             expenses.length === 0
-              ? 'Фиксируйте фактические траты: наличные, безнал, переводы. Можно прикрепить фото чека.'
+              ? 'Фиксируйте траты. Можно привязать сразу несколько зон, категорий, этапов, контрагентов и позиций сметы.'
               : 'Смягчите фильтры или измените период.'
           }
           actionLabel={expenses.length === 0 ? 'Добавить расход' : undefined}
@@ -353,10 +394,21 @@ export function ExpensesPage() {
       ) : (
         <div className="space-y-3">
           {filtered.map((e) => {
-            const zone = zones.find((z) => z.id === e.zoneId);
-            const cat = categories.find((c) => c.id === e.categoryId);
-            const contractor = contractors.find((c) => c.id === e.contractorId);
-            const item = estimateItems.find((i) => i.id === e.estimateItemId);
+            const eZones = getExpenseZoneIds(e)
+              .map((id) => zones.find((z) => z.id === id))
+              .filter(Boolean) as typeof zones;
+            const eCats = getExpenseCategoryIds(e)
+              .map((id) => categories.find((c) => c.id === id))
+              .filter(Boolean) as typeof categories;
+            const eStages = getExpenseStageIds(e)
+              .map((id) => stages.find((s) => s.id === id))
+              .filter(Boolean) as typeof stages;
+            const eContractors = getExpenseContractorIds(e)
+              .map((id) => contractors.find((c) => c.id === id))
+              .filter(Boolean) as typeof contractors;
+            const eItems = getExpenseEstimateIds(e)
+              .map((id) => estimateItems.find((i) => i.id === id))
+              .filter(Boolean) as typeof estimateItems;
             return (
               <Card key={e.id}>
                 <CardContent className="p-4">
@@ -375,22 +427,35 @@ export function ExpensesPage() {
                         {e.comment ? ` · ${e.comment}` : ''}
                       </p>
                       <div className="mt-2 flex flex-wrap gap-1.5">
-                        {zone && (
-                          <Badge variant="outline">
+                        {eZones.map((zone) => (
+                          <Badge key={zone.id} variant="outline">
                             <span
                               className="mr-1.5 inline-block h-2 w-2 rounded-full"
                               style={{ background: zone.color }}
                             />
                             {zone.name}
                           </Badge>
-                        )}
-                        {cat && <Badge variant="secondary">{cat.name}</Badge>}
-                        {item && (
-                          <Badge variant="default">Смета: {item.name}</Badge>
-                        )}
-                        {contractor && (
-                          <Badge variant="outline">{contractor.name}</Badge>
-                        )}
+                        ))}
+                        {eCats.map((cat) => (
+                          <Badge key={cat.id} variant="secondary">
+                            {cat.name}
+                          </Badge>
+                        ))}
+                        {eStages.map((st) => (
+                          <Badge key={st.id} variant="secondary">
+                            {st.name}
+                          </Badge>
+                        ))}
+                        {eItems.map((item) => (
+                          <Badge key={item.id} variant="default">
+                            Смета: {item.name}
+                          </Badge>
+                        ))}
+                        {eContractors.map((c) => (
+                          <Badge key={c.id} variant="outline">
+                            {c.name}
+                          </Badge>
+                        ))}
                         {e.receiptPhoto && (
                           <button
                             type="button"
@@ -475,102 +540,84 @@ export function ExpensesPage() {
                 </SelectContent>
               </Select>
             </div>
+
             <div className="grid gap-1.5">
-              <Label>Позиция сметы (необязательно)</Label>
-              <Select
-                value={form.estimateItemId}
-                onValueChange={onPickEstimate}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Свободная запись" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Без привязки</SelectItem>
-                  {estimateItems.map((i) => (
-                    <SelectItem key={i.id} value={i.id}>
-                      {i.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Позиции сметы (можно несколько)</Label>
+              <p className="text-xs text-muted-foreground">
+                При выборе позиции зоны, категория и этап подставляются
+                автоматически.
+              </p>
+              <MultiChips
+                options={estimateItems.map((i) => ({
+                  id: i.id,
+                  name: i.name,
+                }))}
+                selected={form.estimateItemIds}
+                onToggle={toggleEstimate}
+                emptyLabel="Смета пуста — можно сохранить свободный расход"
+              />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label>Зона</Label>
-                <Select
-                  value={form.zoneId}
-                  onValueChange={(v) => setForm({ ...form, zoneId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {zones.map((z) => (
-                      <SelectItem key={z.id} value={z.id}>
-                        {z.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Категория</Label>
-                <Select
-                  value={form.categoryId}
-                  onValueChange={(v) => setForm({ ...form, categoryId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+
+            <div className="grid gap-1.5">
+              <Label>Зоны (можно несколько)</Label>
+              <MultiChips
+                options={zones}
+                selected={form.zoneIds}
+                onToggle={(id) =>
+                  setForm((f) => ({
+                    ...f,
+                    zoneIds: toggleId(f.zoneIds, id, { minOne: true }),
+                  }))
+                }
+              />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label>Этап</Label>
-                <Select
-                  value={form.stageId}
-                  onValueChange={(v) => setForm({ ...form, stageId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {stages.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Контрагент</Label>
-                <Select
-                  value={form.contractorId}
-                  onValueChange={(v) => setForm({ ...form, contractorId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Не указан</SelectItem>
-                    {contractors.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+
+            <div className="grid gap-1.5">
+              <Label>Категории (можно несколько)</Label>
+              <MultiChips
+                options={categories}
+                selected={form.categoryIds}
+                onToggle={(id) =>
+                  setForm((f) => ({
+                    ...f,
+                    categoryIds: toggleId(f.categoryIds, id, { minOne: true }),
+                  }))
+                }
+              />
             </div>
+
+            <div className="grid gap-1.5">
+              <Label>Этапы (можно несколько)</Label>
+              <MultiChips
+                options={stages.map((s) => ({ id: s.id, name: s.name }))}
+                selected={form.stageIds}
+                onToggle={(id) =>
+                  setForm((f) => ({
+                    ...f,
+                    stageIds: toggleId(f.stageIds, id, { minOne: true }),
+                  }))
+                }
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label>Контрагенты (можно несколько)</Label>
+              <MultiChips
+                options={contractors.map((c) => ({
+                  id: c.id,
+                  name: c.name,
+                }))}
+                selected={form.contractorIds}
+                onToggle={(id) =>
+                  setForm((f) => ({
+                    ...f,
+                    contractorIds: toggleId(f.contractorIds, id),
+                  }))
+                }
+                emptyLabel="Контрагентов пока нет"
+              />
+            </div>
+
             <div className="grid gap-1.5">
               <Label>Комментарий</Label>
               <Textarea

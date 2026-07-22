@@ -17,6 +17,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { formatBr } from '../lib/currency';
+import { getExpenseContractorIds } from '../lib/expense';
 import { useAppStore } from '../store/useAppStore';
 import type { Contractor } from '../types';
 
@@ -112,8 +113,11 @@ export function ContractorsPage() {
         <div className="space-y-3">
           {contractors.map((c) => {
             const spent = expenses
-              .filter((e) => e.contractorId === c.id)
-              .reduce((s, e) => s + e.amount, 0);
+              .filter((e) => getExpenseContractorIds(e).includes(c.id))
+              .reduce((s, e) => {
+                const n = getExpenseContractorIds(e).length || 1;
+                return s + e.amount / n;
+              }, 0);
             const tg = telegramHref(c.telegram);
             return (
               <Card key={c.id}>
