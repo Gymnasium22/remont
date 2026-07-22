@@ -14,8 +14,10 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { ConfirmDialog } from '../components/ui/confirm-dialog';
+import { CheckList } from '../components/ui/check-list';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -24,7 +26,6 @@ import {
 import { EmptyState } from '../components/ui/empty-state';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { MultiChips } from '../components/ui/multi-chips';
 import {
   Select,
   SelectContent,
@@ -187,6 +188,8 @@ export function ExpensesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [form, setForm] = useState<FormState>(() => emptyForm());
+  /** 0 — смета, 1 — оплата, 2 — детали */
+  const [step, setStep] = useState(0);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
@@ -278,6 +281,7 @@ export function ExpensesPage() {
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm());
+    setStep(0);
     setOpen(true);
   };
 
@@ -295,7 +299,20 @@ export function ExpensesPage() {
       comment: e.comment,
       receiptPhoto: e.receiptPhoto,
     });
+    setStep(0);
     setOpen(true);
+  };
+
+  const goNext = () => {
+    if (step === 0 && form.estimateItemIds.length === 0) {
+      toast.error('Выберите хотя бы одну позицию сметы');
+      return;
+    }
+    if (step === 1 && totalFromPays <= 0) {
+      toast.error('Укажите сумму хотя бы по одному способу оплаты');
+      return;
+    }
+    setStep((s) => Math.min(2, s + 1));
   };
 
   const toggleEstimate = (id: string) => {
@@ -649,291 +666,289 @@ export function ExpensesPage() {
         </div>
       )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg">
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setStep(0);
+        }}
+      >
+        <DialogContent className="max-w-md sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
               {editing ? 'Редактировать расход' : 'Новый расход'}
             </DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label>Дата</Label>
-              <Input
-                type="date"
-                value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
-              />
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label>Оплата (можно несколько способов)</Label>
-              <p className="text-xs text-muted-foreground">
-                Укажите, сколько заплатили каждым способом. Итого = сумма
-                заполненных полей.
-              </p>
-              <div className="grid gap-2">
-                {(
-                  [
-                    ['payCash', 'cash', 'Наличные'] as const,
-                    ['payCard', 'card', 'Безнал'] as const,
-                    ['payTransfer', 'transfer', 'Перевод'] as const,
-                  ] as const
-                ).map(([key, , label]) => (
-                  <div
-                    key={key}
-                    className="flex items-center gap-3 rounded-2xl border border-border bg-muted/30 px-3 py-2"
-                  >
-                    <span className="w-24 shrink-0 text-sm font-medium">
-                      {label}
-                    </span>
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      className="h-10"
-                      placeholder="0"
-                      value={form[key]}
-                      onChange={(e) =>
-                        setForm({ ...form, [key]: e.target.value })
-                      }
-                    />
-                    <span className="shrink-0 text-sm text-muted-foreground">
-                      Br
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <p
-                className={cn(
-                  'text-sm font-semibold tabular-nums',
-                  totalFromPays > 0
-                    ? 'text-foreground'
-                    : 'text-muted-foreground',
-                )}
-              >
-                Итого: {formatBr(totalFromPays)}
-              </p>
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label>Позиции сметы *</Label>
-              <p className="text-xs text-muted-foreground">
-                Обязательно. Зоны, категории, этапы и сумма «остаток к оплате»
-                подтягиваются из выбранных позиций. Можно внести аванс меньше
-                остатка — доплатите позже отдельным расходом.
-              </p>
-              <MultiChips
-                options={estimateItems.map((i) => {
-                  const fact = selectItemFact(expenses, i.id);
-                  const remain = itemRemaining(i, fact);
-                  return {
-                    id: i.id,
-                    name: `${i.name} · ост. ${formatBr(remain)}`,
-                  };
-                })}
-                selected={form.estimateItemIds}
-                onToggle={toggleEstimate}
-                emptyLabel="Сначала добавьте позиции в смету"
-              />
-              {selectedBreakdown.length > 0 && (
-                <div className="space-y-2 rounded-2xl border border-border bg-muted/30 p-3 text-sm">
-                  {selectedBreakdown.map(
-                    ({ item, plan, fact, remain, expected }) => (
-                      <div
-                        key={item.id}
-                        className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5"
-                      >
-                        <span className="font-medium">{item.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          план {formatBr(plan)}
-                          {expected < plan
-                            ? ` · к оплате ${formatBr(expected)}`
-                            : ''}{' '}
-                          · уже {formatBr(fact)} ·{' '}
-                          <span className="font-semibold text-foreground">
-                            остаток {formatBr(remain)}
-                          </span>
-                        </span>
-                      </div>
-                    ),
+            <div className="mt-3 grid grid-cols-3 gap-1.5">
+              {(['Смета', 'Оплата', 'Детали'] as const).map((label, i) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setStep(i)}
+                  className={cn(
+                    'rounded-xl px-2 py-2 text-center text-xs font-medium transition',
+                    step === i
+                      ? 'bg-primary text-primary-foreground'
+                      : i < step
+                        ? 'bg-primary/15 text-primary'
+                        : 'bg-muted text-muted-foreground',
                   )}
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
-                    <span className="font-semibold">
-                      Остаток по выбранным: {formatBr(selectedRemainingTotal)}
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={selectedRemainingTotal <= 0}
-                      onClick={() =>
-                        setForm((f) => ({
-                          ...f,
-                          ...applyRemainingToCash(selectedRemainingTotal),
-                        }))
-                      }
-                    >
-                      Подставить остаток
-                    </Button>
+                >
+                  {i + 1}. {label}
+                </button>
+              ))}
+            </div>
+          </DialogHeader>
+
+          <DialogBody>
+            {step === 0 && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Выберите позиции. Зоны, категории и этапы подтянутся сами.
+                </p>
+                <CheckList
+                  maxHeightClass="max-h-[min(40dvh,280px)]"
+                  items={estimateItems.map((i) => {
+                    const fact = selectItemFact(expenses, i.id);
+                    const remain = itemRemaining(i, fact);
+                    return {
+                      id: i.id,
+                      title: i.name,
+                      subtitle: `Остаток ${formatBr(remain)} · план ${formatBr(itemPlan(i))}`,
+                    };
+                  })}
+                  selected={form.estimateItemIds}
+                  onToggle={toggleEstimate}
+                  emptyLabel="Сначала добавьте позиции в смету"
+                />
+
+                {linkedToEstimate && (
+                  <div className="space-y-2 rounded-2xl bg-muted/40 p-3">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Из сметы
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {form.zoneIds.map((id) => {
+                        const z = zones.find((x) => x.id === id);
+                        return (
+                          <Badge key={`z-${id}`} variant="outline">
+                            {z && (
+                              <span
+                                className="mr-1.5 inline-block h-2 w-2 rounded-full"
+                                style={{ background: z.color }}
+                              />
+                            )}
+                            {z?.name ?? id}
+                          </Badge>
+                        );
+                      })}
+                      {form.categoryIds.map((id) => {
+                        const c = categories.find((x) => x.id === id);
+                        return (
+                          <Badge key={`c-${id}`} variant="secondary">
+                            {c?.name ?? id}
+                          </Badge>
+                        );
+                      })}
+                      {form.stageIds.map((id) => {
+                        const s = stages.find((x) => x.id === id);
+                        return (
+                          <Badge key={`s-${id}`} variant="secondary">
+                            {s?.name ?? id}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                    <p className="text-sm font-semibold tabular-nums">
+                      Остаток: {formatBr(selectedRemainingTotal)}
+                    </p>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Для аванса впишите меньшую сумму (например 615 Br). Позже
-                    добавьте ещё расход на те же позиции — остаток уменьшится.
+                )}
+              </div>
+            )}
+
+            {step === 1 && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Можно разбить: наличные + безнал + перевод. Аванс — меньше
+                  остатка ({formatBr(selectedRemainingTotal)}).
+                </p>
+
+                <div className="grid grid-cols-1 gap-2">
+                  {(
+                    [
+                      ['payCash', 'Наличные'] as const,
+                      ['payCard', 'Безнал'] as const,
+                      ['payTransfer', 'Перевод'] as const,
+                    ] as const
+                  ).map(([key, label]) => (
+                    <div
+                      key={key}
+                      className="grid grid-cols-[1fr_minmax(0,7.5rem)_auto] items-center gap-2 rounded-2xl border border-border bg-card px-3 py-2.5"
+                    >
+                      <span className="truncate text-sm font-medium">
+                        {label}
+                      </span>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        className="h-10 min-w-0 text-right tabular-nums"
+                        placeholder="0"
+                        value={form[key]}
+                        onChange={(e) =>
+                          setForm({ ...form, [key]: e.target.value })
+                        }
+                      />
+                      <span className="text-sm text-muted-foreground">Br</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 rounded-2xl bg-primary/10 px-4 py-3">
+                  <span className="text-sm font-medium">Итого</span>
+                  <span className="text-lg font-bold tabular-nums">
+                    {formatBr(totalFromPays)}
+                  </span>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  disabled={selectedRemainingTotal <= 0}
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      ...applyRemainingToCash(selectedRemainingTotal),
+                    }))
+                  }
+                >
+                  Подставить остаток {formatBr(selectedRemainingTotal)}
+                </Button>
+              </div>
+            )}
+
+            {step === 2 && (
+              <div className="space-y-4">
+                <div className="grid gap-1.5">
+                  <Label>Дата</Label>
+                  <Input
+                    type="date"
+                    value={form.date}
+                    onChange={(e) =>
+                      setForm({ ...form, date: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="grid gap-1.5">
+                  <Label>Контрагенты</Label>
+                  <CheckList
+                    maxHeightClass="max-h-36"
+                    items={contractors.map((c) => ({
+                      id: c.id,
+                      title: c.name,
+                    }))}
+                    selected={form.contractorIds}
+                    onToggle={(id) =>
+                      setForm((f) => ({
+                        ...f,
+                        contractorIds: toggleId(f.contractorIds, id),
+                      }))
+                    }
+                    emptyLabel="Контрагентов пока нет"
+                  />
+                </div>
+
+                <div className="grid gap-1.5">
+                  <Label>Комментарий</Label>
+                  <Textarea
+                    className="min-h-[72px]"
+                    value={form.comment}
+                    onChange={(e) =>
+                      setForm({ ...form, comment: e.target.value })
+                    }
+                    placeholder="Что купили / кому заплатили"
+                  />
+                </div>
+
+                <div className="grid gap-1.5">
+                  <Label>Фото чека</Label>
+                  <div className="flex items-center gap-2">
+                    <label className="inline-flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm font-medium hover:bg-muted">
+                      <Camera className="h-4 w-4" />
+                      {form.receiptPhoto ? 'Заменить' : 'Прикрепить'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(ev) =>
+                          onPhoto(ev.target.files?.[0] ?? null)
+                        }
+                      />
+                    </label>
+                    {form.receiptPhoto && (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={() =>
+                          setForm({ ...form, receiptPhoto: null })
+                        }
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {form.receiptPhoto && (
+                    <img
+                      src={form.receiptPhoto}
+                      alt="Чек"
+                      className="mx-auto max-h-28 rounded-2xl border object-contain"
+                    />
+                  )}
+                </div>
+
+                <div className="rounded-2xl bg-muted/40 p-3 text-sm">
+                  <p className="font-semibold tabular-nums">
+                    {formatBr(totalFromPays)}
+                  </p>
+                  <p className="mt-1 truncate text-muted-foreground">
+                    {form.estimateItemIds.length} поз. · {form.date}
+                    {form.comment ? ` · ${form.comment}` : ''}
                   </p>
                 </div>
-              )}
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label>Зоны (из сметы)</Label>
-              {linkedToEstimate ? (
-                form.zoneIds.length === 0 ? (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">
-                    У выбранных позиций нет зон
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {form.zoneIds.map((id) => {
-                      const z = zones.find((x) => x.id === id);
-                      return (
-                        <Badge key={id} variant="outline">
-                          {z && (
-                            <span
-                              className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                              style={{ background: z.color }}
-                            />
-                          )}
-                          {z?.name ?? id}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                )
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Выберите позиции сметы
-                </p>
-              )}
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label>Категории (из сметы)</Label>
-              {linkedToEstimate ? (
-                form.categoryIds.length === 0 ? (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">
-                    Нет категорий
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {form.categoryIds.map((id) => {
-                      const c = categories.find((x) => x.id === id);
-                      return (
-                        <Badge key={id} variant="secondary">
-                          {c?.name ?? id}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                )
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Выберите позиции сметы
-                </p>
-              )}
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label>Этапы (из сметы)</Label>
-              {linkedToEstimate ? (
-                form.stageIds.length === 0 ? (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">
-                    Нет этапов
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {form.stageIds.map((id) => {
-                      const s = stages.find((x) => x.id === id);
-                      return (
-                        <Badge key={id} variant="secondary">
-                          {s?.name ?? id}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                )
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Выберите позиции сметы
-                </p>
-              )}
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label>Контрагенты (необязательно)</Label>
-              <MultiChips
-                options={contractors.map((c) => ({
-                  id: c.id,
-                  name: c.name,
-                }))}
-                selected={form.contractorIds}
-                onToggle={(id) =>
-                  setForm((f) => ({
-                    ...f,
-                    contractorIds: toggleId(f.contractorIds, id),
-                  }))
-                }
-                emptyLabel="Контрагентов пока нет"
-              />
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label>Комментарий</Label>
-              <Textarea
-                value={form.comment}
-                onChange={(e) => setForm({ ...form, comment: e.target.value })}
-                placeholder="Что купили / кому заплатили"
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Фото чека</Label>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-2.5 text-sm font-medium hover:bg-muted">
-                  <Camera className="h-4 w-4" />
-                  {form.receiptPhoto ? 'Заменить фото' : 'Прикрепить'}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(ev) => onPhoto(ev.target.files?.[0] ?? null)}
-                  />
-                </label>
-                {form.receiptPhoto && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setForm({ ...form, receiptPhoto: null })}
-                  >
-                    <X className="h-4 w-4" />
-                    Убрать
-                  </Button>
-                )}
               </div>
-              {form.receiptPhoto && (
-                <img
-                  src={form.receiptPhoto}
-                  alt="Чек"
-                  className="mt-2 max-h-40 rounded-2xl border object-contain"
-                />
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Отмена
-            </Button>
-            <Button onClick={save}>Сохранить</Button>
+            )}
+          </DialogBody>
+
+          <DialogFooter className="flex-row gap-2 sm:flex-row">
+            {step > 0 ? (
+              <Button
+                variant="outline"
+                className="flex-1 sm:flex-none"
+                onClick={() => setStep((s) => s - 1)}
+              >
+                Назад
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="flex-1 sm:flex-none"
+                onClick={() => setOpen(false)}
+              >
+                Отмена
+              </Button>
+            )}
+            {step < 2 ? (
+              <Button className="flex-1 sm:flex-none" onClick={goNext}>
+                Далее
+              </Button>
+            ) : (
+              <Button className="flex-1 sm:flex-none" onClick={save}>
+                Сохранить
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

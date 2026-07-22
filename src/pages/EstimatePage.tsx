@@ -17,6 +17,7 @@ import { Card, CardContent } from '../components/ui/card';
 import { ConfirmDialog } from '../components/ui/confirm-dialog';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -526,7 +527,7 @@ export function EstimatePage() {
               {editing ? 'Редактировать позицию' : 'Новая позиция сметы'}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-3">
+          <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>Название</Label>
               <Input
@@ -866,7 +867,7 @@ export function EstimatePage() {
                 placeholder="Необязательно"
               />
             </div>
-          </div>
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
               Отмена
@@ -882,7 +883,7 @@ export function EstimatePage() {
           <DialogHeader>
             <DialogTitle>Объединить зоны</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-3">
+          <DialogBody className="grid gap-3">
             <p className="text-sm text-muted-foreground">
               Выберите зоны, которые нужно слить в одну. Позиции сметы и расходы
               переедут в новую зону, старые зоны будут удалены.
@@ -910,7 +911,7 @@ export function EstimatePage() {
                 дашборде сохранится, если хотя бы одна из зон была в работе.
               </p>
             )}
-          </div>
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMergeOpen(false)}>
               Отмена

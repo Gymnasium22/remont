@@ -7,6 +7,7 @@ import { Card, CardContent } from '../components/ui/card';
 import { ConfirmDialog } from '../components/ui/confirm-dialog';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -190,7 +191,7 @@ export function ContractorsPage() {
               {editing ? 'Редактировать' : 'Новый контрагент'}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-3">
+          <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>Название / имя</Label>
               <Input
@@ -224,7 +225,7 @@ export function ContractorsPage() {
                 placeholder="Специализация, условия…"
               />
             </div>
-          </div>
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
               Отмена

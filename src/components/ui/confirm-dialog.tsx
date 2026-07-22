@@ -1,5 +1,6 @@
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -34,13 +35,20 @@ export function ConfirmDialog({
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+        <DialogBody className="pt-0">
+          <DialogDescription>{description}</DialogDescription>
+        </DialogBody>
+        <DialogFooter className="flex-row gap-2 sm:flex-row">
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => onOpenChange(false)}
+          >
             {cancelLabel}
           </Button>
           <Button
+            className="flex-1"
             variant={destructive ? 'destructive' : 'default'}
             onClick={() => {
               onConfirm();
