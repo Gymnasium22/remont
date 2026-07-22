@@ -39,7 +39,12 @@ import {
   itemPlan,
   zoneShare,
 } from '../lib/zones';
-import { buildPlanByItemId, useAppStore } from '../store/useAppStore';
+import {
+  buildPlanByItemId,
+  selectItemFact,
+  useAppStore,
+} from '../store/useAppStore';
+import { getExpenseEstimateIds } from '../lib/expense';
 import { PAYMENT_LABELS } from '../types';
 
 export function DashboardPage() {
@@ -50,7 +55,16 @@ export function DashboardPage() {
   const expenses = useAppStore((s) => s.expenses);
 
   const plan = estimateItems.reduce((sum, i) => sum + itemPlan(i), 0);
+  /** Все траты (смета + покупки в магазине) */
   const fact = expenses.reduce((sum, e) => sum + e.amount, 0);
+  /** Только оплаты по позициям сметы (без «Покупка») */
+  const factOnEstimate = estimateItems.reduce(
+    (sum, i) => sum + selectItemFact(expenses, i.id, estimateItems),
+    0,
+  );
+  const factShop = expenses
+    .filter((e) => getExpenseEstimateIds(e).length === 0)
+    .reduce((sum, e) => sum + e.amount, 0);
   const diyEconomy = estimateItems.reduce(
     (sum, i) => sum + itemDiyEconomy(i),
     0,
@@ -60,11 +74,11 @@ export function DashboardPage() {
     0,
   );
   const budget = project.totalBudget || plan;
-  /** Остаток бюджета с учётом экономии своими силами */
+  /** Остаток общего бюджета (все траты) */
   const remain = budget - fact;
   const overspend = fact > budget ? fact - budget : 0;
-  /** Сколько ещё «не закрыто» по смете: ожидаемые оплаты − факт (не ниже 0) */
-  const planGap = Math.max(0, expectedPaid - fact);
+  /** Ещё к оплате по смете: план−DIY − только расходы «по смете» */
+  const planGap = Math.max(0, expectedPaid - factOnEstimate);
 
   const activeZones = zones.filter((z) => project.activeZones.includes(z.id));
 
@@ -179,7 +193,11 @@ export function DashboardPage() {
         <KpiCard
           label="Факт"
           value={formatBr(fact)}
-          hint="Потрачено"
+          hint={
+            factShop > 0
+              ? `Смета ${formatBr(factOnEstimate)} · покупки ${formatBr(factShop)}`
+              : 'Все траты'
+          }
           tone="blue"
         />
         <KpiCard
@@ -202,7 +220,7 @@ export function DashboardPage() {
         <KpiCard
           label="Ещё к оплате"
           value={formatBr(planGap)}
-          hint="План без DIY − факт"
+          hint={`По смете: ${formatBr(expectedPaid)} − ${formatBr(factOnEstimate)}`}
           tone={planGap > 0 ? 'neutral' : 'green'}
         />
         <KpiCard
@@ -222,8 +240,8 @@ export function DashboardPage() {
             </p>
             <p className="mt-1 text-muted-foreground">
               Из плана {formatBr(plan)} вы закрыли {formatBr(diyEconomy)} без
-              оплаты наёмным. К ожидаемым платежам: {formatBr(expectedPaid)},
-              уже потрачено: {formatBr(fact)}.
+              оплаты наёмным. К ожидаемым платежам по смете:{' '}
+              {formatBr(expectedPaid)}, уже по смете: {formatBr(factOnEstimate)}.
             </p>
           </CardContent>
         </Card>
