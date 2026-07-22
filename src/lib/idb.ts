@@ -36,6 +36,7 @@ function normalizeData(raw: AppData): AppData {
         100,
         Math.max(0, Number(rawItem.selfDonePercent) || 0),
       ),
+      extras: Array.isArray(rawItem.extras) ? rawItem.extras : [],
     } as EstimateItem;
   });
   const expenses = (raw.expenses ?? []).map((e) => normalizeExpense(e));

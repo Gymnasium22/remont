@@ -36,17 +36,29 @@ import {
 import { Textarea } from '../components/ui/textarea';
 import { formatBr } from '../lib/currency';
 import { cn } from '../lib/utils';
+import { uid } from '../lib/utils';
 import {
   formatZoneNames,
+  getItemExtras,
   getItemZoneIds,
   itemDiyEconomy,
   itemExpectedPaid,
+  itemExtrasPlan,
   itemHasZone,
   itemPlan,
+  itemRemaining,
 } from '../lib/zones';
 import { selectItemFact, useAppStore } from '../store/useAppStore';
-import type { EstimateItem } from '../types';
+import type { EstimateExtra, EstimateItem } from '../types';
 import { UNITS } from '../types';
+
+type ExtraForm = {
+  id: string;
+  name: string;
+  quantity: string;
+  unit: string;
+  unitPrice: string;
+};
 
 type FormState = {
   name: string;
@@ -58,6 +70,7 @@ type FormState = {
   unitPrice: string;
   progress: string;
   selfDonePercent: string;
+  extras: ExtraForm[];
   note: string;
 };
 
@@ -75,8 +88,31 @@ const emptyForm = (
   unitPrice: '',
   progress: '0',
   selfDonePercent: '0',
+  extras: [],
   note: '',
 });
+
+function emptyExtra(): ExtraForm {
+  return {
+    id: uid(),
+    name: '',
+    quantity: '1',
+    unit: 'шт',
+    unitPrice: '',
+  };
+}
+
+function extrasFromForm(extras: ExtraForm[]): EstimateExtra[] {
+  return extras
+    .filter((e) => e.name.trim())
+    .map((e) => ({
+      id: e.id || uid(),
+      name: e.name.trim(),
+      quantity: Number(e.quantity) || 0,
+      unit: e.unit || 'шт',
+      unitPrice: Number(e.unitPrice) || 0,
+    }));
+}
 
 function ZoneChips({
   zones,
@@ -186,6 +222,13 @@ export function EstimatePage() {
       unitPrice: String(item.unitPrice),
       progress: String(item.progress),
       selfDonePercent: String(item.selfDonePercent ?? 0),
+      extras: getItemExtras(item).map((e) => ({
+        id: e.id,
+        name: e.name,
+        quantity: String(e.quantity),
+        unit: e.unit,
+        unitPrice: String(e.unitPrice),
+      })),
       note: item.note ?? '',
     });
     setOpen(true);
@@ -207,6 +250,7 @@ export function EstimatePage() {
     let progress = Math.min(100, Math.max(0, Number(form.progress) || 0));
     // Если своими силами больше, чем отмеченный прогресс — подтягиваем прогресс
     if (selfDonePercent > progress) progress = selfDonePercent;
+    const extras = extrasFromForm(form.extras);
     const payload = {
       name: form.name.trim(),
       zoneIds: form.zoneIds,
@@ -218,6 +262,7 @@ export function EstimatePage() {
       unitPrice: Number(form.unitPrice) || 0,
       progress,
       selfDonePercent,
+      extras,
       note: form.note.trim() || undefined,
     };
     if (editing) {
@@ -336,11 +381,14 @@ export function EstimatePage() {
             const cat = categories.find((c) => c.id === item.categoryId);
             const stage = stages.find((s) => s.id === item.stageId);
             const plan = itemPlan(item);
+            const extrasPlan = itemExtrasPlan(item);
             const diy = itemDiyEconomy(item);
             const expected = itemExpectedPaid(item);
             const fact = selectItemFact(expenses, item.id);
+            const remain = itemRemaining(item, fact);
             const over = fact > expected && expected >= 0 && plan > 0;
             const selfPct = item.selfDonePercent ?? 0;
+            const extras = getItemExtras(item);
             return (
               <Card key={item.id} className="overflow-hidden">
                 <CardContent className="p-4">
@@ -364,6 +412,11 @@ export function EstimatePage() {
                         )}
                         {cat && <Badge variant="secondary">{cat.name}</Badge>}
                         {stage && <Badge variant="secondary">{stage.name}</Badge>}
+                        {extras.length > 0 && (
+                          <Badge variant="warning">
+                            +{extras.length} допработ
+                          </Badge>
+                        )}
                         {selfPct > 0 && (
                           <Badge variant="success">
                             Своими силами {selfPct}%
@@ -371,7 +424,10 @@ export function EstimatePage() {
                         )}
                       </div>
                       <p className="mt-2 text-sm text-muted-foreground">
-                        {item.quantity} {item.unit} × {formatBr(item.unitPrice)}{' '}
+                        {item.quantity} {item.unit} × {formatBr(item.unitPrice)}
+                        {extrasPlan > 0 && (
+                          <> + допы {formatBr(extrasPlan)}</>
+                        )}{' '}
                         ={' '}
                         <span className="font-semibold text-foreground">
                           {formatBr(plan)}
@@ -385,24 +441,37 @@ export function EstimatePage() {
                             </span>
                           </>
                         )}
-                        {fact > 0 && (
-                          <>
-                            {' '}
-                            · факт{' '}
-                            <span
-                              className={over ? 'font-medium text-red-500' : ''}
-                            >
-                              {formatBr(fact)}
-                            </span>
-                            {selfPct > 0 && (
-                              <span className="text-muted-foreground">
-                                {' '}
-                                / к оплате {formatBr(expected)}
-                              </span>
-                            )}
-                          </>
-                        )}
+                        {' '}
+                        · оплачено{' '}
+                        <span
+                          className={over ? 'font-medium text-red-500' : ''}
+                        >
+                          {formatBr(fact)}
+                        </span>
+                        {' '}
+                        · остаток{' '}
+                        <span className="font-medium text-foreground">
+                          {formatBr(remain)}
+                        </span>
                       </p>
+                      {extras.length > 0 && (
+                        <ul className="mt-2 space-y-1 rounded-2xl bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                          {extras.map((ex) => (
+                            <li
+                              key={ex.id}
+                              className="flex justify-between gap-2"
+                            >
+                              <span className="truncate">
+                                {ex.name} · {ex.quantity} {ex.unit} ×{' '}
+                                {formatBr(ex.unitPrice)}
+                              </span>
+                              <span className="shrink-0 font-medium text-foreground">
+                                {formatBr(ex.quantity * ex.unitPrice)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       <div className="mt-3">
                         <div className="mb-1 flex justify-between text-xs text-muted-foreground">
                           <span>Выполнение</span>
@@ -564,13 +633,163 @@ export function EstimatePage() {
               </div>
             </div>
             <p className="text-sm text-muted-foreground">
-              Итого:{' '}
+              База:{' '}
               <strong className="text-foreground">
                 {formatBr(
                   (Number(form.quantity) || 0) * (Number(form.unitPrice) || 0),
                 )}
               </strong>
+              {form.extras.some((e) => e.name.trim()) && (
+                <>
+                  {' '}
+                  + допы{' '}
+                  <strong className="text-foreground">
+                    {formatBr(
+                      extrasFromForm(form.extras).reduce(
+                        (s, e) => s + e.quantity * e.unitPrice,
+                        0,
+                      ),
+                    )}
+                  </strong>
+                  {' '}
+                  ={' '}
+                  <strong className="text-foreground">
+                    {formatBr(
+                      (Number(form.quantity) || 0) *
+                        (Number(form.unitPrice) || 0) +
+                        extrasFromForm(form.extras).reduce(
+                          (s, e) => s + e.quantity * e.unitPrice,
+                          0,
+                        ),
+                    )}
+                  </strong>
+                </>
+              )}
             </p>
+
+            <div className="grid gap-2 rounded-2xl border border-border bg-muted/20 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <Label>Допработы и материалы</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    По ходу ремонта: мешки, вынос, вывоз мусора и т.п. Увеличивают
+                    план позиции.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      extras: [...form.extras, emptyExtra()],
+                    })
+                  }
+                >
+                  <Plus className="h-4 w-4" />
+                  Добавить
+                </Button>
+              </div>
+              {form.extras.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Пока нет допработ
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {form.extras.map((ex, idx) => (
+                    <div
+                      key={ex.id}
+                      className="grid gap-2 rounded-2xl border border-border bg-card p-3"
+                    >
+                      <div className="flex items-start gap-2">
+                        <Input
+                          className="flex-1"
+                          placeholder="Название (мешки, вывоз…)"
+                          value={ex.name}
+                          onChange={(e) => {
+                            const extras = [...form.extras];
+                            extras[idx] = { ...ex, name: e.target.value };
+                            setForm({ ...form, extras });
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          size="icon-sm"
+                          variant="ghost"
+                          className="text-destructive"
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              extras: form.extras.filter((_, i) => i !== idx),
+                            })
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="Кол-во"
+                          value={ex.quantity}
+                          onChange={(e) => {
+                            const extras = [...form.extras];
+                            extras[idx] = {
+                              ...ex,
+                              quantity: e.target.value,
+                            };
+                            setForm({ ...form, extras });
+                          }}
+                        />
+                        <Select
+                          value={ex.unit}
+                          onValueChange={(v) => {
+                            const extras = [...form.extras];
+                            extras[idx] = { ...ex, unit: v };
+                            setForm({ ...form, extras });
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {UNITS.map((u) => (
+                              <SelectItem key={u} value={u}>
+                                {u}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="Цена"
+                          value={ex.unitPrice}
+                          onChange={(e) => {
+                            const extras = [...form.extras];
+                            extras[idx] = {
+                              ...ex,
+                              unitPrice: e.target.value,
+                            };
+                            setForm({ ...form, extras });
+                          }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        ={' '}
+                        {formatBr(
+                          (Number(ex.quantity) || 0) *
+                            (Number(ex.unitPrice) || 0),
+                        )}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label>Выполнение, %</Label>

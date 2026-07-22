@@ -37,6 +37,16 @@ export interface Project {
   activeZones: string[];
 }
 
+/** Доп. работа / материал в рамках позиции сметы (добавляется по ходу) */
+export interface EstimateExtra {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  note?: string;
+}
+
 export interface EstimateItem {
   id: string;
   name: string;
@@ -60,6 +70,11 @@ export interface EstimateItem {
    * Даёт «экономию» = план × selfDonePercent / 100.
    */
   selfDonePercent: number;
+  /**
+   * Допработы и материалы, появившиеся в процессе
+   * (мешки, вынос, вывоз мусора и т.п.). Входят в план позиции.
+   */
+  extras: EstimateExtra[];
   note?: string;
   createdAt: string;
   updatedAt: string;

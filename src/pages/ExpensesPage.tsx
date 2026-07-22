@@ -49,8 +49,13 @@ import {
   toggleId,
 } from '../lib/expense';
 import { compressImage, cn, formatDate } from '../lib/utils';
-import { getItemZoneIds } from '../lib/zones';
-import { todayISO, useAppStore } from '../store/useAppStore';
+import {
+  getItemZoneIds,
+  itemExpectedPaid,
+  itemPlan,
+  itemRemaining,
+} from '../lib/zones';
+import { selectItemFact, todayISO, useAppStore } from '../store/useAppStore';
 import type { Expense, PaymentMethod, PaymentPart } from '../types';
 import { PAYMENT_LABELS } from '../types';
 
@@ -232,6 +237,44 @@ export function ExpensesPage() {
   const totalFromPays = paymentPartsTotal(paymentPreview);
   const linkedToEstimate = form.estimateItemIds.length > 0;
 
+  /** Остатки по выбранным позициям (для подсказки и автосуммы) */
+  const selectedBreakdown = useMemo(() => {
+    return form.estimateItemIds
+      .map((id) => {
+        const item = estimateItems.find((i) => i.id === id);
+        if (!item) return null;
+        const fact = selectItemFact(expenses, id);
+        const plan = itemPlan(item);
+        const expected = itemExpectedPaid(item);
+        const remain = itemRemaining(item, fact);
+        return { item, plan, expected, fact, remain };
+      })
+      .filter(Boolean) as {
+      item: (typeof estimateItems)[0];
+      plan: number;
+      expected: number;
+      fact: number;
+      remain: number;
+    }[];
+  }, [form.estimateItemIds, estimateItems, expenses]);
+
+  const selectedRemainingTotal = selectedBreakdown.reduce(
+    (s, r) => s + r.remain,
+    0,
+  );
+
+  const applyRemainingToCash = (remain: number) => {
+    if (remain <= 0) {
+      return { payCash: '', payCard: '', payTransfer: '' };
+    }
+    // Подставляем остаток в наличные (можно разбить вручную)
+    return {
+      payCash: String(Math.round(remain * 100) / 100),
+      payCard: '',
+      payTransfer: '',
+    };
+  };
+
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm());
@@ -265,14 +308,40 @@ export function ExpensesPage() {
       const commentWasAuto =
         !f.comment.trim() || f.comment.trim() === prevAuto.trim();
 
+      // Остаток к оплате по выбранным позициям
+      const remainSum = nextIds.reduce((s, xid) => {
+        const item = estimateItems.find((i) => i.id === xid);
+        if (!item) return s;
+        return s + itemRemaining(item, selectItemFact(expenses, xid));
+      }, 0);
+
+      // Автосумма, если оплату ещё не трогали или она совпадала с прошлым остатком
+      const prevRemain = f.estimateItemIds.reduce((s, xid) => {
+        const item = estimateItems.find((i) => i.id === xid);
+        if (!item) return s;
+        return s + itemRemaining(item, selectItemFact(expenses, xid));
+      }, 0);
+      const prevPartsTotal = paymentPartsTotal(formToPaymentParts(f));
+      const amountWasAuto =
+        prevPartsTotal === 0 ||
+        Math.abs(prevPartsTotal - prevRemain) < 0.01;
+
+      const payFields = amountWasAuto
+        ? applyRemainingToCash(remainSum)
+        : {
+            payCash: f.payCash,
+            payCard: f.payCard,
+            payTransfer: f.payTransfer,
+          };
+
       return {
         ...f,
         estimateItemIds: nextIds,
-        // Только из сметы — без дефолтов и без «залипших» значений
         zoneIds: derived.zoneIds,
         categoryIds: derived.categoryIds,
         stageIds: derived.stageIds,
         comment: commentWasAuto ? nextAuto : f.comment,
+        ...payFields,
       };
     });
   };
@@ -649,18 +718,70 @@ export function ExpensesPage() {
             <div className="grid gap-1.5">
               <Label>Позиции сметы *</Label>
               <p className="text-xs text-muted-foreground">
-                Обязательно. Зоны, категории и этапы берутся только отсюда — без
-                значений «по умолчанию».
+                Обязательно. Зоны, категории, этапы и сумма «остаток к оплате»
+                подтягиваются из выбранных позиций. Можно внести аванс меньше
+                остатка — доплатите позже отдельным расходом.
               </p>
               <MultiChips
-                options={estimateItems.map((i) => ({
-                  id: i.id,
-                  name: i.name,
-                }))}
+                options={estimateItems.map((i) => {
+                  const fact = selectItemFact(expenses, i.id);
+                  const remain = itemRemaining(i, fact);
+                  return {
+                    id: i.id,
+                    name: `${i.name} · ост. ${formatBr(remain)}`,
+                  };
+                })}
                 selected={form.estimateItemIds}
                 onToggle={toggleEstimate}
                 emptyLabel="Сначала добавьте позиции в смету"
               />
+              {selectedBreakdown.length > 0 && (
+                <div className="space-y-2 rounded-2xl border border-border bg-muted/30 p-3 text-sm">
+                  {selectedBreakdown.map(
+                    ({ item, plan, fact, remain, expected }) => (
+                      <div
+                        key={item.id}
+                        className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5"
+                      >
+                        <span className="font-medium">{item.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          план {formatBr(plan)}
+                          {expected < plan
+                            ? ` · к оплате ${formatBr(expected)}`
+                            : ''}{' '}
+                          · уже {formatBr(fact)} ·{' '}
+                          <span className="font-semibold text-foreground">
+                            остаток {formatBr(remain)}
+                          </span>
+                        </span>
+                      </div>
+                    ),
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+                    <span className="font-semibold">
+                      Остаток по выбранным: {formatBr(selectedRemainingTotal)}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedRemainingTotal <= 0}
+                      onClick={() =>
+                        setForm((f) => ({
+                          ...f,
+                          ...applyRemainingToCash(selectedRemainingTotal),
+                        }))
+                      }
+                    >
+                      Подставить остаток
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Для аванса впишите меньшую сумму (например 615 Br). Позже
+                    добавьте ещё расход на те же позиции — остаток уменьшится.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="grid gap-1.5">

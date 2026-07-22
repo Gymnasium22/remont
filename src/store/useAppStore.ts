@@ -280,6 +280,7 @@ export const useAppStore = create<AppState>((set, get) => {
         100,
         Math.max(0, Number(item.selfDonePercent) || 0),
       );
+      const extras = Array.isArray(item.extras) ? item.extras : [];
       apply({
         estimateItems: [
           ...get().estimateItems,
@@ -288,6 +289,7 @@ export const useAppStore = create<AppState>((set, get) => {
             zoneIds,
             zoneId: zoneIds[0],
             selfDonePercent,
+            extras,
             id: uid(),
             createdAt: now,
             updatedAt: now,
@@ -305,7 +307,14 @@ export const useAppStore = create<AppState>((set, get) => {
             100,
             Math.max(0, Number(next.selfDonePercent) || 0),
           );
-          return { ...next, zoneIds, zoneId: zoneIds[0], selfDonePercent };
+          const extras = Array.isArray(next.extras) ? next.extras : [];
+          return {
+            ...next,
+            zoneIds,
+            zoneId: zoneIds[0],
+            selfDonePercent,
+            extras,
+          };
         }),
       });
     },
@@ -337,6 +346,9 @@ export const useAppStore = create<AppState>((set, get) => {
             name: `${item.name} (копия)`,
             progress: 0,
             selfDonePercent: 0,
+            extras: Array.isArray(item.extras)
+              ? item.extras.map((ex) => ({ ...ex, id: uid() }))
+              : [],
             createdAt: now,
             updatedAt: now,
           },
@@ -400,6 +412,7 @@ export const useAppStore = create<AppState>((set, get) => {
             100,
             Math.max(0, Number(item.selfDonePercent) || 0),
           ),
+          extras: Array.isArray(item.extras) ? item.extras : [],
         };
       });
       const expenses = (data.expenses ?? []).map((e) => normalizeExpense(e));
