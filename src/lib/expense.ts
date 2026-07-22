@@ -1,4 +1,4 @@
-import type { Expense } from '../types';
+import type { Expense, PaymentMethod, PaymentPart } from '../types';
 
 function asIds(
   multi: string[] | undefined | null,
@@ -37,6 +37,44 @@ export function getExpenseEstimateIds(
   e: Pick<Expense, 'estimateItemIds' | 'estimateItemId'>,
 ): string[] {
   return asIds(e.estimateItemIds, e.estimateItemId);
+}
+
+/** Нормализация разбивки оплаты (поддержка старого paymentMethod) */
+export function getPaymentParts(
+  e: Pick<Expense, 'paymentParts' | 'paymentMethod' | 'amount'>,
+): PaymentPart[] {
+  if (Array.isArray(e.paymentParts) && e.paymentParts.length > 0) {
+    return e.paymentParts
+      .map((p) => ({
+        method: p.method,
+        amount: Number(p.amount) || 0,
+      }))
+      .filter((p) => p.amount > 0);
+  }
+  if (e.paymentMethod && (e.amount ?? 0) > 0) {
+    return [{ method: e.paymentMethod, amount: e.amount }];
+  }
+  return [];
+}
+
+export function paymentPartsTotal(parts: PaymentPart[]): number {
+  return parts.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+}
+
+export function paymentAmountByMethod(
+  e: Pick<Expense, 'paymentParts' | 'paymentMethod' | 'amount'>,
+  method: PaymentMethod,
+): number {
+  return getPaymentParts(e)
+    .filter((p) => p.method === method)
+    .reduce((s, p) => s + p.amount, 0);
+}
+
+export function expenseHasPaymentMethod(
+  e: Pick<Expense, 'paymentParts' | 'paymentMethod' | 'amount'>,
+  method: PaymentMethod,
+): boolean {
+  return getPaymentParts(e).some((p) => p.method === method && p.amount > 0);
 }
 
 export function expenseHasZone(
@@ -98,8 +136,17 @@ export function normalizeExpense(e: Expense): Expense {
   const stageIds = getExpenseStageIds(e);
   const contractorIds = getExpenseContractorIds(e);
   const estimateItemIds = getExpenseEstimateIds(e);
+  const paymentParts = getPaymentParts(e);
+  const amount =
+    paymentParts.length > 0
+      ? paymentPartsTotal(paymentParts)
+      : Number(e.amount) || 0;
+
   return {
     ...e,
+    amount,
+    paymentParts,
+    paymentMethod: paymentParts[0]?.method ?? e.paymentMethod ?? 'cash',
     zoneIds,
     zoneId: zoneIds[0],
     categoryIds,

@@ -30,6 +30,7 @@ import {
   expenseEstimateShare,
   expenseZoneShare,
   getExpenseZoneIds,
+  paymentAmountByMethod,
 } from '../lib/expense';
 import {
   itemDiyEconomy,
@@ -117,9 +118,7 @@ export function DashboardPage() {
 
   const paymentSplit = (['cash', 'card', 'transfer'] as const).map((m) => ({
     name: PAYMENT_LABELS[m],
-    value: expenses
-      .filter((e) => e.paymentMethod === m)
-      .reduce((s, e) => s + e.amount, 0),
+    value: expenses.reduce((s, e) => s + paymentAmountByMethod(e, m), 0),
     key: m,
   })).filter((x) => x.value > 0);
 
@@ -466,7 +465,17 @@ export function DashboardPage() {
                           {e.comment || zoneNames || 'Расход'}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {e.date} · {PAYMENT_LABELS[e.paymentMethod]}
+                          {e.date}
+                          {e.paymentParts?.length
+                            ? ` · ${e.paymentParts
+                                .map(
+                                  (p) =>
+                                    `${PAYMENT_LABELS[p.method]} ${formatBr(p.amount)}`,
+                                )
+                                .join(', ')}`
+                            : e.paymentMethod
+                              ? ` · ${PAYMENT_LABELS[e.paymentMethod]}`
+                              : ''}
                         </p>
                       </div>
                       <span className="shrink-0 font-semibold tabular-nums">

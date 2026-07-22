@@ -37,24 +37,31 @@ import { formatBr } from '../lib/currency';
 import {
   expenseHasCategory,
   expenseHasContractor,
+  expenseHasPaymentMethod,
   expenseHasZone,
   getExpenseCategoryIds,
   getExpenseContractorIds,
   getExpenseEstimateIds,
   getExpenseStageIds,
   getExpenseZoneIds,
+  getPaymentParts,
+  paymentPartsTotal,
   toggleId,
 } from '../lib/expense';
-import { compressImage, formatDate } from '../lib/utils';
+import { compressImage, cn, formatDate } from '../lib/utils';
 import { getItemZoneIds } from '../lib/zones';
 import { todayISO, useAppStore } from '../store/useAppStore';
-import type { Expense, PaymentMethod } from '../types';
+import type { Expense, PaymentMethod, PaymentPart } from '../types';
 import { PAYMENT_LABELS } from '../types';
+
+const METHODS = Object.keys(PAYMENT_LABELS) as PaymentMethod[];
 
 type FormState = {
   date: string;
-  amount: string;
-  paymentMethod: PaymentMethod;
+  /** Суммы по способам оплаты, Br (строки для инпутов) */
+  payCash: string;
+  payCard: string;
+  payTransfer: string;
   estimateItemIds: string[];
   zoneIds: string[];
   categoryIds: string[];
@@ -64,36 +71,23 @@ type FormState = {
   receiptPhoto: string | null;
 };
 
-function freeDefaults(
-  zones: { id: string }[],
-  cats: { id: string }[],
-  stages: { id: string }[],
-) {
-  return {
-    zoneIds: zones[0]?.id ? [zones[0].id] : ([] as string[]),
-    categoryIds: cats[0]?.id ? [cats[0].id] : ([] as string[]),
-    stageIds: stages[0]?.id ? [stages[0].id] : ([] as string[]),
-  };
-}
-
-function emptyForm(
-  zones: { id: string }[],
-  cats: { id: string }[],
-  stages: { id: string }[],
-): FormState {
+function emptyForm(): FormState {
   return {
     date: todayISO(),
-    amount: '',
-    paymentMethod: 'cash',
+    payCash: '',
+    payCard: '',
+    payTransfer: '',
     estimateItemIds: [],
-    ...freeDefaults(zones, cats, stages),
+    zoneIds: [],
+    categoryIds: [],
+    stageIds: [],
     contractorIds: [],
     comment: '',
     receiptPhoto: null,
   };
 }
 
-/** Зоны / категории / этапы строго из выбранных позиций сметы */
+/** Зоны / категории / этапы строго из выбранных позиций сметы (без дефолтов) */
 function deriveFromEstimateItems(
   itemIds: string[],
   estimateItems: {
@@ -104,10 +98,7 @@ function deriveFromEstimateItems(
     categoryId: string;
     stageId: string;
   }[],
-  fallback: { zoneIds: string[]; categoryIds: string[]; stageIds: string[] },
 ) {
-  if (itemIds.length === 0) return fallback;
-
   const zoneIds = new Set<string>();
   const categoryIds = new Set<string>();
   const stageIds = new Set<string>();
@@ -142,6 +133,32 @@ function autoCommentFromItems(
     .join(', ');
 }
 
+function formToPaymentParts(form: FormState): PaymentPart[] {
+  const parts: PaymentPart[] = [];
+  const cash = Number(form.payCash) || 0;
+  const card = Number(form.payCard) || 0;
+  const transfer = Number(form.payTransfer) || 0;
+  if (cash > 0) parts.push({ method: 'cash', amount: cash });
+  if (card > 0) parts.push({ method: 'card', amount: card });
+  if (transfer > 0) parts.push({ method: 'transfer', amount: transfer });
+  return parts;
+}
+
+function partsToFormFields(parts: PaymentPart[]) {
+  const by = (m: PaymentMethod) =>
+    parts
+      .filter((p) => p.method === m)
+      .reduce((s, p) => s + p.amount, 0);
+  const cash = by('cash');
+  const card = by('card');
+  const transfer = by('transfer');
+  return {
+    payCash: cash > 0 ? String(cash) : '',
+    payCard: card > 0 ? String(card) : '',
+    payTransfer: transfer > 0 ? String(transfer) : '',
+  };
+}
+
 export function ExpensesPage() {
   const zones = useAppStore((s) => s.zones);
   const categories = useAppStore((s) => s.categories);
@@ -164,9 +181,7 @@ export function ExpensesPage() {
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
-  const [form, setForm] = useState<FormState>(() =>
-    emptyForm(zones, categories, stages),
-  );
+  const [form, setForm] = useState<FormState>(() => emptyForm());
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
@@ -177,7 +192,11 @@ export function ExpensesPage() {
         if (filterZone !== 'all' && !expenseHasZone(e, filterZone)) return false;
         if (filterCat !== 'all' && !expenseHasCategory(e, filterCat))
           return false;
-        if (filterPay !== 'all' && e.paymentMethod !== filterPay) return false;
+        if (
+          filterPay !== 'all' &&
+          !expenseHasPaymentMethod(e, filterPay as PaymentMethod)
+        )
+          return false;
         if (filterContractor !== 'all') {
           if (!expenseHasContractor(e, filterContractor)) return false;
         }
@@ -209,19 +228,22 @@ export function ExpensesPage() {
   ]);
 
   const total = filtered.reduce((s, e) => s + e.amount, 0);
+  const paymentPreview = formToPaymentParts(form);
+  const totalFromPays = paymentPartsTotal(paymentPreview);
+  const linkedToEstimate = form.estimateItemIds.length > 0;
 
   const openCreate = () => {
     setEditing(null);
-    setForm(emptyForm(zones, categories, stages));
+    setForm(emptyForm());
     setOpen(true);
   };
 
   const openEdit = (e: Expense) => {
     setEditing(e);
+    const parts = getPaymentParts(e);
     setForm({
       date: e.date,
-      amount: String(e.amount),
-      paymentMethod: e.paymentMethod,
+      ...partsToFormFields(parts),
       estimateItemIds: getExpenseEstimateIds(e),
       zoneIds: getExpenseZoneIds(e),
       categoryIds: getExpenseCategoryIds(e),
@@ -236,11 +258,7 @@ export function ExpensesPage() {
   const toggleEstimate = (id: string) => {
     setForm((f) => {
       const nextIds = toggleId(f.estimateItemIds, id);
-      const derived = deriveFromEstimateItems(
-        nextIds,
-        estimateItems,
-        freeDefaults(zones, categories, stages),
-      );
+      const derived = deriveFromEstimateItems(nextIds, estimateItems);
 
       const prevAuto = autoCommentFromItems(f.estimateItemIds, estimateItems);
       const nextAuto = autoCommentFromItems(nextIds, estimateItems);
@@ -250,6 +268,7 @@ export function ExpensesPage() {
       return {
         ...f,
         estimateItemIds: nextIds,
+        // Только из сметы — без дефолтов и без «залипших» значений
         zoneIds: derived.zoneIds,
         categoryIds: derived.categoryIds,
         stageIds: derived.stageIds,
@@ -257,8 +276,6 @@ export function ExpensesPage() {
       };
     });
   };
-
-  const linkedToEstimate = form.estimateItemIds.length > 0;
 
   const onPhoto = async (file: File | null) => {
     if (!file) return;
@@ -272,27 +289,35 @@ export function ExpensesPage() {
   };
 
   const save = () => {
-    const amount = Number(form.amount);
-    if (!amount || amount <= 0) {
-      toast.error('Укажите сумму расхода');
+    const paymentParts = formToPaymentParts(form);
+    const amount = paymentPartsTotal(paymentParts);
+
+    if (amount <= 0) {
+      toast.error('Укажите сумму хотя бы по одному способу оплаты');
+      return;
+    }
+    if (form.estimateItemIds.length === 0) {
+      toast.error('Выберите хотя бы одну позицию сметы');
       return;
     }
     if (form.zoneIds.length === 0) {
-      toast.error('Выберите хотя бы одну зону');
+      toast.error('У выбранных позиций нет зон — проверьте смету');
       return;
     }
     if (form.categoryIds.length === 0) {
-      toast.error('Выберите хотя бы одну категорию');
+      toast.error('У выбранных позиций нет категорий — проверьте смету');
       return;
     }
     if (form.stageIds.length === 0) {
-      toast.error('Выберите хотя бы один этап');
+      toast.error('У выбранных позиций нет этапов — проверьте смету');
       return;
     }
+
     const payload = {
       date: form.date || todayISO(),
       amount,
-      paymentMethod: form.paymentMethod,
+      paymentParts,
+      paymentMethod: paymentParts[0].method,
       estimateItemIds: form.estimateItemIds,
       estimateItemId: form.estimateItemIds[0] ?? null,
       zoneIds: form.zoneIds,
@@ -389,7 +414,7 @@ export function ExpensesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Все</SelectItem>
-                  {(Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((k) => (
+                  {METHODS.map((k) => (
                     <SelectItem key={k} value={k}>
                       {PAYMENT_LABELS[k]}
                     </SelectItem>
@@ -445,7 +470,7 @@ export function ExpensesPage() {
           }
           description={
             expenses.length === 0
-              ? 'Фиксируйте траты. Можно привязать сразу несколько зон, категорий, этапов, контрагентов и позиций сметы.'
+              ? 'Выберите позиции сметы — зоны, категории и этапы подтянутся сами. Можно разбить оплату: наличные + безнал + перевод.'
               : 'Смягчите фильтры или измените период.'
           }
           actionLabel={expenses.length === 0 ? 'Добавить расход' : undefined}
@@ -469,6 +494,7 @@ export function ExpensesPage() {
             const eItems = getExpenseEstimateIds(e)
               .map((id) => estimateItems.find((i) => i.id === id))
               .filter(Boolean) as typeof estimateItems;
+            const parts = getPaymentParts(e);
             return (
               <Card key={e.id}>
                 <CardContent className="p-4">
@@ -478,9 +504,11 @@ export function ExpensesPage() {
                         <span className="text-lg font-bold tabular-nums">
                           {formatBr(e.amount)}
                         </span>
-                        <Badge variant="secondary">
-                          {PAYMENT_LABELS[e.paymentMethod]}
-                        </Badge>
+                        {parts.map((p) => (
+                          <Badge key={p.method} variant="secondary">
+                            {PAYMENT_LABELS[p.method]} {formatBr(p.amount)}
+                          </Badge>
+                        ))}
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {formatDate(e.date)}
@@ -560,52 +588,69 @@ export function ExpensesPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label>Дата</Label>
-                <Input
-                  type="date"
-                  value={form.date}
-                  onChange={(e) => setForm({ ...form, date: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Сумма, Br</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={form.amount}
-                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                  placeholder="0"
-                />
-              </div>
-            </div>
             <div className="grid gap-1.5">
-              <Label>Способ оплаты</Label>
-              <Select
-                value={form.paymentMethod}
-                onValueChange={(v) =>
-                  setForm({ ...form, paymentMethod: v as PaymentMethod })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(PAYMENT_LABELS) as PaymentMethod[]).map((k) => (
-                    <SelectItem key={k} value={k}>
-                      {PAYMENT_LABELS[k]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Дата</Label>
+              <Input
+                type="date"
+                value={form.date}
+                onChange={(e) => setForm({ ...form, date: e.target.value })}
+              />
             </div>
 
             <div className="grid gap-1.5">
-              <Label>Позиции сметы (можно несколько)</Label>
+              <Label>Оплата (можно несколько способов)</Label>
               <p className="text-xs text-muted-foreground">
-                Зоны, категории и этапы заполняются только из выбранных
-                позиций. Снимите позицию — связанные поля пересчитаются.
+                Укажите, сколько заплатили каждым способом. Итого = сумма
+                заполненных полей.
+              </p>
+              <div className="grid gap-2">
+                {(
+                  [
+                    ['payCash', 'cash', 'Наличные'] as const,
+                    ['payCard', 'card', 'Безнал'] as const,
+                    ['payTransfer', 'transfer', 'Перевод'] as const,
+                  ] as const
+                ).map(([key, , label]) => (
+                  <div
+                    key={key}
+                    className="flex items-center gap-3 rounded-2xl border border-border bg-muted/30 px-3 py-2"
+                  >
+                    <span className="w-24 shrink-0 text-sm font-medium">
+                      {label}
+                    </span>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      className="h-10"
+                      placeholder="0"
+                      value={form[key]}
+                      onChange={(e) =>
+                        setForm({ ...form, [key]: e.target.value })
+                      }
+                    />
+                    <span className="shrink-0 text-sm text-muted-foreground">
+                      Br
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p
+                className={cn(
+                  'text-sm font-semibold tabular-nums',
+                  totalFromPays > 0
+                    ? 'text-foreground'
+                    : 'text-muted-foreground',
+                )}
+              >
+                Итого: {formatBr(totalFromPays)}
+              </p>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label>Позиции сметы *</Label>
+              <p className="text-xs text-muted-foreground">
+                Обязательно. Зоны, категории и этапы берутся только отсюда — без
+                значений «по умолчанию».
               </p>
               <MultiChips
                 options={estimateItems.map((i) => ({
@@ -614,75 +659,96 @@ export function ExpensesPage() {
                 }))}
                 selected={form.estimateItemIds}
                 onToggle={toggleEstimate}
-                emptyLabel="Смета пуста — можно сохранить свободный расход"
+                emptyLabel="Сначала добавьте позиции в смету"
               />
             </div>
 
             <div className="grid gap-1.5">
-              <Label>
-                Зоны
-                {linkedToEstimate ? ' (из сметы)' : ' (можно несколько)'}
-              </Label>
-              {linkedToEstimate && (
-                <p className="text-xs text-muted-foreground">
-                  Подставлено из позиций. Можно уточнить вручную; при смене
-                  позиций сметы поля снова пересчитаются.
+              <Label>Зоны (из сметы)</Label>
+              {linkedToEstimate ? (
+                form.zoneIds.length === 0 ? (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    У выбранных позиций нет зон
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {form.zoneIds.map((id) => {
+                      const z = zones.find((x) => x.id === id);
+                      return (
+                        <Badge key={id} variant="outline">
+                          {z && (
+                            <span
+                              className="mr-1.5 inline-block h-2 w-2 rounded-full"
+                              style={{ background: z.color }}
+                            />
+                          )}
+                          {z?.name ?? id}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Выберите позиции сметы
                 </p>
               )}
-              <MultiChips
-                options={zones}
-                selected={form.zoneIds}
-                onToggle={(id) =>
-                  setForm((f) => ({
-                    ...f,
-                    zoneIds: toggleId(f.zoneIds, id, {
-                      minOne: f.estimateItemIds.length === 0,
-                    }),
-                  }))
-                }
-              />
             </div>
 
             <div className="grid gap-1.5">
-              <Label>
-                Категории
-                {linkedToEstimate ? ' (из сметы)' : ' (можно несколько)'}
-              </Label>
-              <MultiChips
-                options={categories}
-                selected={form.categoryIds}
-                onToggle={(id) =>
-                  setForm((f) => ({
-                    ...f,
-                    categoryIds: toggleId(f.categoryIds, id, {
-                      minOne: f.estimateItemIds.length === 0,
-                    }),
-                  }))
-                }
-              />
+              <Label>Категории (из сметы)</Label>
+              {linkedToEstimate ? (
+                form.categoryIds.length === 0 ? (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    Нет категорий
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {form.categoryIds.map((id) => {
+                      const c = categories.find((x) => x.id === id);
+                      return (
+                        <Badge key={id} variant="secondary">
+                          {c?.name ?? id}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Выберите позиции сметы
+                </p>
+              )}
             </div>
 
             <div className="grid gap-1.5">
-              <Label>
-                Этапы
-                {linkedToEstimate ? ' (из сметы)' : ' (можно несколько)'}
-              </Label>
-              <MultiChips
-                options={stages.map((s) => ({ id: s.id, name: s.name }))}
-                selected={form.stageIds}
-                onToggle={(id) =>
-                  setForm((f) => ({
-                    ...f,
-                    stageIds: toggleId(f.stageIds, id, {
-                      minOne: f.estimateItemIds.length === 0,
-                    }),
-                  }))
-                }
-              />
+              <Label>Этапы (из сметы)</Label>
+              {linkedToEstimate ? (
+                form.stageIds.length === 0 ? (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    Нет этапов
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {form.stageIds.map((id) => {
+                      const s = stages.find((x) => x.id === id);
+                      return (
+                        <Badge key={id} variant="secondary">
+                          {s?.name ?? id}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Выберите позиции сметы
+                </p>
+              )}
             </div>
 
             <div className="grid gap-1.5">
-              <Label>Контрагенты (можно несколько)</Label>
+              <Label>Контрагенты (необязательно)</Label>
               <MultiChips
                 options={contractors.map((c) => ({
                   id: c.id,

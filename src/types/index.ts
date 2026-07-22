@@ -65,24 +65,34 @@ export interface EstimateItem {
   updatedAt: string;
 }
 
+/** Часть оплаты (можно несколько способов на один расход) */
+export interface PaymentPart {
+  method: PaymentMethod;
+  amount: number;
+}
+
 export interface Expense {
   id: string;
   date: string;
+  /** Итоговая сумма = сумма paymentParts */
   amount: number;
-  paymentMethod: PaymentMethod;
+  /** Разбивка по способам оплаты */
+  paymentParts: PaymentPart[];
+  /** @deprecated → paymentParts */
+  paymentMethod?: PaymentMethod;
   /** Позиции сметы (можно несколько) */
   estimateItemIds: string[];
   /** @deprecated → estimateItemIds */
   estimateItemId?: string | null;
-  /** Зоны (можно несколько) */
+  /** Зоны (можно несколько) — из позиций сметы */
   zoneIds: string[];
   /** @deprecated → zoneIds */
   zoneId?: string;
-  /** Категории (можно несколько) */
+  /** Категории (можно несколько) — из позиций сметы */
   categoryIds: string[];
   /** @deprecated → categoryIds */
   categoryId?: string;
-  /** Этапы (можно несколько) */
+  /** Этапы (можно несколько) — из позиций сметы */
   stageIds: string[];
   /** @deprecated → stageIds */
   stageId?: string;
