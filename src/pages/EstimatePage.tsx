@@ -178,6 +178,8 @@ export function EstimatePage() {
   const [form, setForm] = useState<FormState>(() =>
     emptyForm(zones, categories, stages),
   );
+  /** 0 — основа, 1 — допработы, 2 — прогресс */
+  const [estStep, setEstStep] = useState(0);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -198,7 +200,7 @@ export function EstimatePage() {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }, [items, search, filterZone]);
 
-  const totalPlan = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+  const totalPlan = items.reduce((s, i) => s + itemPlan(i), 0);
 
   const toggleFormZone = (id: string) => {
     setForm((f) => {
@@ -214,6 +216,7 @@ export function EstimatePage() {
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm(zones, categories, stages));
+    setEstStep(0);
     setOpen(true);
   };
 
@@ -238,7 +241,22 @@ export function EstimatePage() {
       })),
       note: item.note ?? '',
     });
+    setEstStep(0);
     setOpen(true);
+  };
+
+  const goEstNext = () => {
+    if (estStep === 0) {
+      if (!form.name.trim()) {
+        toast.error('Укажите название позиции');
+        return;
+      }
+      if (form.zoneIds.length === 0) {
+        toast.error('Выберите хотя бы одну зону');
+        return;
+      }
+    }
+    setEstStep((s) => Math.min(2, s + 1));
   };
 
   const save = () => {
@@ -525,168 +543,167 @@ export function EstimatePage() {
         </div>
       )}
 
-      {/* Форма позиции */}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+      {/* Форма позиции — 3 шага */}
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setEstStep(0);
+        }}
+      >
+        <DialogContent className="max-w-md sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
               {editing ? 'Редактировать позицию' : 'Новая позиция сметы'}
             </DialogTitle>
+            <div className="mt-3 grid grid-cols-3 gap-1.5">
+              {(['Основа', 'Допы', 'Прогресс'] as const).map((label, i) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setEstStep(i)}
+                  className={cn(
+                    'rounded-xl px-2 py-2 text-center text-xs font-medium transition',
+                    estStep === i
+                      ? 'bg-primary text-primary-foreground'
+                      : i < estStep
+                        ? 'bg-primary/15 text-primary'
+                        : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {i + 1}. {label}
+                </button>
+              ))}
+            </div>
           </DialogHeader>
-          <DialogBody className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label>Название</Label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Например: Плитка для ванной"
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Зоны (можно несколько)</Label>
-              <p className="text-xs text-muted-foreground">
-                Выберите все комнаты, к которым относится позиция. Например:
-                «стяжка» для кухни и коридора.
-              </p>
-              <ZoneChips
-                zones={zones}
-                selected={form.zoneIds}
-                onToggle={toggleFormZone}
-              />
-              {form.zoneIds.length > 1 && (
-                <p className="text-xs text-primary">
-                  Объединены: {formatZoneNames(form.zoneIds, zones)}
-                </p>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label>Категория</Label>
-                <Select
-                  value={form.categoryId}
-                  onValueChange={(v) => setForm({ ...form, categoryId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Этап</Label>
-                <Select
-                  value={form.stageId}
-                  onValueChange={(v) => setForm({ ...form, stageId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {stages.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="grid gap-1.5">
-                <Label>Кол-во</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={form.quantity}
-                  onChange={(e) =>
-                    setForm({ ...form, quantity: e.target.value })
-                  }
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Ед.</Label>
-                <Select
-                  value={form.unit}
-                  onValueChange={(v) => setForm({ ...form, unit: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {UNITS.map((u) => (
-                      <SelectItem key={u} value={u}>
-                        {u}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Цена, Br</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={form.unitPrice}
-                  onChange={(e) =>
-                    setForm({ ...form, unitPrice: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              База:{' '}
-              <strong className="text-foreground">
-                {formatBr(
-                  (Number(form.quantity) || 0) * (Number(form.unitPrice) || 0),
-                )}
-              </strong>
-              {form.extras.some((e) => e.name.trim()) && (
-                <>
-                  {' '}
-                  + допы{' '}
-                  <strong className="text-foreground">
-                    {formatBr(
-                      extrasFromForm(form.extras).reduce(
-                        (s, e) => s + e.quantity * e.unitPrice,
-                        0,
-                      ),
-                    )}
-                  </strong>
-                  {' '}
-                  ={' '}
-                  <strong className="text-foreground">
-                    {formatBr(
-                      (Number(form.quantity) || 0) *
-                        (Number(form.unitPrice) || 0) +
-                        extrasFromForm(form.extras).reduce(
-                          (s, e) => s + e.quantity * e.unitPrice,
-                          0,
-                        ),
-                    )}
-                  </strong>
-                </>
-              )}
-            </p>
-
-            <div className="grid gap-2 rounded-2xl border border-border bg-muted/20 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <Label>Допработы и материалы</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    По ходу ремонта: мешки, вынос, вывоз мусора и т.п. Увеличивают
-                    план позиции.
-                  </p>
+          <DialogBody>
+            {estStep === 0 && (
+              <div className="grid gap-3">
+                <div className="grid gap-1.5">
+                  <Label>Название</Label>
+                  <Input
+                    value={form.name}
+                    onChange={(e) =>
+                      setForm({ ...form, name: e.target.value })
+                    }
+                    placeholder="Например: Демонтаж ванной"
+                  />
                 </div>
+                <div className="grid gap-1.5">
+                  <Label>Зоны</Label>
+                  <ZoneChips
+                    zones={zones}
+                    selected={form.zoneIds}
+                    onToggle={toggleFormZone}
+                  />
+                  {form.zoneIds.length > 1 && (
+                    <p className="text-xs text-primary">
+                      {formatZoneNames(form.zoneIds, zones)}
+                    </p>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label>Категория</Label>
+                    <Select
+                      value={form.categoryId}
+                      onValueChange={(v) =>
+                        setForm({ ...form, categoryId: v })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categories.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Этап</Label>
+                    <Select
+                      value={form.stageId}
+                      onValueChange={(v) => setForm({ ...form, stageId: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {stages.map((s) => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label>Кол-во</Label>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      value={form.quantity}
+                      onChange={(e) =>
+                        setForm({ ...form, quantity: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Ед.</Label>
+                    <Select
+                      value={form.unit}
+                      onValueChange={(v) => setForm({ ...form, unit: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {UNITS.map((u) => (
+                          <SelectItem key={u} value={u}>
+                            {u}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Цена, Br</Label>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      value={form.unitPrice}
+                      onChange={(e) =>
+                        setForm({ ...form, unitPrice: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <p className="text-sm font-medium tabular-nums">
+                  База:{' '}
+                  {formatBr(
+                    (Number(form.quantity) || 0) *
+                      (Number(form.unitPrice) || 0),
+                  )}
+                </p>
+              </div>
+            )}
+
+            {estStep === 1 && (
+              <div className="grid gap-3">
+                <p className="text-sm text-muted-foreground">
+                  Допработы по ходу: мешки, вынос, вывоз. Увеличивают план.
+                </p>
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
+                  className="w-full"
                   onClick={() =>
                     setForm({
                       ...form,
@@ -695,190 +712,215 @@ export function EstimatePage() {
                   }
                 >
                   <Plus className="h-4 w-4" />
-                  Добавить
+                  Добавить допработу
                 </Button>
-              </div>
-              {form.extras.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Пока нет допработ
+                {form.extras.length === 0 ? (
+                  <p className="rounded-2xl bg-muted/40 px-3 py-6 text-center text-sm text-muted-foreground">
+                    Пока нет допработ — можно пропустить
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {form.extras.map((ex, idx) => (
+                      <div
+                        key={ex.id}
+                        className="grid gap-2 rounded-2xl border border-border bg-card p-3"
+                      >
+                        <div className="flex items-start gap-2">
+                          <Input
+                            className="min-w-0 flex-1"
+                            placeholder="Мешки, вывоз…"
+                            value={ex.name}
+                            onChange={(e) => {
+                              const extras = [...form.extras];
+                              extras[idx] = { ...ex, name: e.target.value };
+                              setForm({ ...form, extras });
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            size="icon-sm"
+                            variant="ghost"
+                            className="shrink-0 text-destructive"
+                            onClick={() =>
+                              setForm({
+                                ...form,
+                                extras: form.extras.filter((_, i) => i !== idx),
+                              })
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            placeholder="Кол-во"
+                            value={ex.quantity}
+                            onChange={(e) => {
+                              const extras = [...form.extras];
+                              extras[idx] = {
+                                ...ex,
+                                quantity: e.target.value,
+                              };
+                              setForm({ ...form, extras });
+                            }}
+                          />
+                          <Select
+                            value={ex.unit}
+                            onValueChange={(v) => {
+                              const extras = [...form.extras];
+                              extras[idx] = { ...ex, unit: v };
+                              setForm({ ...form, extras });
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {UNITS.map((u) => (
+                                <SelectItem key={u} value={u}>
+                                  {u}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            placeholder="Цена"
+                            value={ex.unitPrice}
+                            onChange={(e) => {
+                              const extras = [...form.extras];
+                              extras[idx] = {
+                                ...ex,
+                                unitPrice: e.target.value,
+                              };
+                              setForm({ ...form, extras });
+                            }}
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          ={' '}
+                          {formatBr(
+                            (Number(ex.quantity) || 0) *
+                              (Number(ex.unitPrice) || 0),
+                          )}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-sm font-medium tabular-nums">
+                  План с допами:{' '}
+                  {formatBr(
+                    (Number(form.quantity) || 0) *
+                      (Number(form.unitPrice) || 0) +
+                      extrasFromForm(form.extras).reduce(
+                        (s, e) => s + e.quantity * e.unitPrice,
+                        0,
+                      ),
+                  )}
                 </p>
-              ) : (
-                <div className="space-y-3">
-                  {form.extras.map((ex, idx) => (
-                    <div
-                      key={ex.id}
-                      className="grid gap-2 rounded-2xl border border-border bg-card p-3"
-                    >
-                      <div className="flex items-start gap-2">
-                        <Input
-                          className="flex-1"
-                          placeholder="Название (мешки, вывоз…)"
-                          value={ex.name}
-                          onChange={(e) => {
-                            const extras = [...form.extras];
-                            extras[idx] = { ...ex, name: e.target.value };
-                            setForm({ ...form, extras });
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          size="icon-sm"
-                          variant="ghost"
-                          className="text-destructive"
-                          onClick={() =>
-                            setForm({
-                              ...form,
-                              extras: form.extras.filter((_, i) => i !== idx),
-                            })
-                          }
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <Input
-                          type="number"
-                          inputMode="decimal"
-                          placeholder="Кол-во"
-                          value={ex.quantity}
-                          onChange={(e) => {
-                            const extras = [...form.extras];
-                            extras[idx] = {
-                              ...ex,
-                              quantity: e.target.value,
-                            };
-                            setForm({ ...form, extras });
-                          }}
-                        />
-                        <Select
-                          value={ex.unit}
-                          onValueChange={(v) => {
-                            const extras = [...form.extras];
-                            extras[idx] = { ...ex, unit: v };
-                            setForm({ ...form, extras });
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {UNITS.map((u) => (
-                              <SelectItem key={u} value={u}>
-                                {u}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          type="number"
-                          inputMode="decimal"
-                          placeholder="Цена"
-                          value={ex.unitPrice}
-                          onChange={(e) => {
-                            const extras = [...form.extras];
-                            extras[idx] = {
-                              ...ex,
-                              unitPrice: e.target.value,
-                            };
-                            setForm({ ...form, extras });
-                          }}
-                        />
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        ={' '}
-                        {formatBr(
-                          (Number(ex.quantity) || 0) *
-                            (Number(ex.unitPrice) || 0),
-                        )}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+              </div>
+            )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label>Выполнение, %</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={form.progress}
-                  onChange={(e) =>
-                    setForm({ ...form, progress: e.target.value })
-                  }
-                />
+            {estStep === 2 && (
+              <div className="grid gap-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label>Выполнение, %</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={form.progress}
+                      onChange={(e) =>
+                        setForm({ ...form, progress: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Своими силами, %</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={form.selfDonePercent}
+                      onChange={(e) =>
+                        setForm({ ...form, selfDonePercent: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  «Своими силами» — экономия: не платите наёмным за эту долю.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setForm({
+                        ...form,
+                        selfDonePercent: '100',
+                        progress: '100',
+                      })
+                    }
+                  >
+                    Полностью сами
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setForm({ ...form, selfDonePercent: '0' })}
+                  >
+                    Сбросить DIY
+                  </Button>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Заметка</Label>
+                  <Textarea
+                    className="min-h-[72px]"
+                    value={form.note}
+                    onChange={(e) =>
+                      setForm({ ...form, note: e.target.value })
+                    }
+                    placeholder="Необязательно"
+                  />
+                </div>
               </div>
-              <div className="grid gap-1.5">
-                <Label>Своими силами, %</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={form.selfDonePercent}
-                  onChange={(e) =>
-                    setForm({ ...form, selfDonePercent: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              «Своими силами» — работы, которые вы сделали сами, а не нанятые
-              мастера. Это считается экономией (не нужно платить по смете).
-              {(() => {
-                const p =
-                  (Number(form.quantity) || 0) * (Number(form.unitPrice) || 0);
-                const diy =
-                  (p *
-                    Math.min(
-                      100,
-                      Math.max(0, Number(form.selfDonePercent) || 0),
-                    )) /
-                  100;
-                return diy > 0
-                  ? ` Экономия сейчас: ${formatBr(diy)}.`
-                  : '';
-              })()}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  setForm({
-                    ...form,
-                    selfDonePercent: '100',
-                    progress: '100',
-                  })
-                }
-              >
-                Полностью сами
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setForm({ ...form, selfDonePercent: '0' })}
-              >
-                Сбросить DIY
-              </Button>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Заметка</Label>
-              <Textarea
-                value={form.note}
-                onChange={(e) => setForm({ ...form, note: e.target.value })}
-                placeholder="Необязательно"
-              />
-            </div>
+            )}
           </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Отмена
-            </Button>
-            <Button onClick={save}>Сохранить</Button>
+          <DialogFooter className="flex-row gap-2 sm:flex-row">
+            {estStep > 0 ? (
+              <Button
+                variant="outline"
+                className="flex-1 sm:flex-none"
+                onClick={() => setEstStep((s) => s - 1)}
+              >
+                Назад
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="flex-1 sm:flex-none"
+                onClick={() => setOpen(false)}
+              >
+                Отмена
+              </Button>
+            )}
+            {estStep < 2 ? (
+              <Button className="flex-1 sm:flex-none" onClick={goEstNext}>
+                Далее
+              </Button>
+            ) : (
+              <Button className="flex-1 sm:flex-none" onClick={save}>
+                Сохранить
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

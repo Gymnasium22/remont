@@ -162,6 +162,9 @@ export function DashboardPage() {
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))
     .slice(0, 5);
 
+  const isEmpty =
+    estimateItems.length === 0 && expenses.length === 0;
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -174,63 +177,123 @@ export function DashboardPage() {
         action={
           <div className="flex gap-2">
             <Button asChild size="sm" variant="outline">
-              <Link to="/expenses">
+              <Link to="/expenses?new=1">
                 <Plus className="h-4 w-4" />
-                К расходам
+                Расход
               </Link>
             </Button>
           </div>
         }
       />
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <KpiCard
-          label="План"
-          value={formatBr(plan)}
-          hint="По смете"
-          tone="neutral"
-        />
-        <KpiCard
-          label="Факт"
-          value={formatBr(fact)}
-          hint={
-            factShop > 0
-              ? `Смета ${formatBr(factOnEstimate)} · покупки ${formatBr(factShop)}`
-              : 'Все траты'
-          }
-          tone="blue"
-        />
-        <KpiCard
-          label="Своими силами"
-          value={formatBr(diyEconomy)}
-          hint={
-            diyEconomy > 0
-              ? `Не платим наёмным · к оплате ${formatBr(expectedPaid)}`
-              : 'Отметьте DIY в смете'
-          }
-          tone="green"
-        />
-        <KpiCard
-          label={remain >= 0 ? 'Остаток' : 'Минус'}
-          value={formatBr(Math.abs(remain))}
-          hint={budget ? `Бюджет ${formatBr(budget)}` : 'от плана/бюджета'}
-          tone={remain >= 0 ? 'green' : 'red'}
-          icon={remain >= 0 ? ArrowDownRight : ArrowUpRight}
-        />
-        <KpiCard
-          label="Ещё к оплате"
-          value={formatBr(planGap)}
-          hint={`По смете: ${formatBr(expectedPaid)} − ${formatBr(factOnEstimate)}`}
-          tone={planGap > 0 ? 'neutral' : 'green'}
-        />
-        <KpiCard
-          label="Перерасход"
-          value={formatBr(overspend)}
-          hint={overspend > 0 ? 'Сверх бюджета' : 'В рамках'}
-          tone={overspend > 0 ? 'red' : 'green'}
-          icon={TrendingDown}
-        />
+      {isEmpty && (
+        <Card className="border-primary/25 bg-primary/5">
+          <CardContent className="space-y-3 p-5">
+            <p className="font-semibold">С чего начать</p>
+            <ol className="list-decimal space-y-1.5 pl-5 text-sm text-muted-foreground">
+              <li>
+                <Link to="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
+                  Настройки
+                </Link>
+                {' — '}название, бюджет, зоны в работе
+              </li>
+              <li>
+                <Link to="/estimate" className="font-medium text-primary underline-offset-2 hover:underline">
+                  Смета
+                </Link>
+                {' — '}работы прораба и допработы по ходу
+              </li>
+              <li>
+                <Link to="/expenses?new=1" className="font-medium text-primary underline-offset-2 hover:underline">
+                  Расходы
+                </Link>
+                {' — '}авансы «по смете» и покупки в магазине «вне сметы»
+              </li>
+            </ol>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button asChild size="sm">
+                <Link to="/estimate">Открыть смету</Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/expenses?new=1">Добавить расход</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Деньги: план / факт / бюджет */}
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Деньги
+        </p>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <KpiCard
+            label="План сметы"
+            value={formatBr(plan)}
+            hint="Работы и допработы"
+            tone="neutral"
+          />
+          <KpiCard
+            label="Потрачено всего"
+            value={formatBr(fact)}
+            hint={
+              factShop > 0
+                ? `Смета ${formatBr(factOnEstimate)} · магазин ${formatBr(factShop)}`
+                : 'Смета + покупки'
+            }
+            tone="blue"
+          />
+          <KpiCard
+            label={remain >= 0 ? 'Остаток бюджета' : 'Минус к бюджету'}
+            value={formatBr(Math.abs(remain))}
+            hint={
+              hasBudget
+                ? `Бюджет ${formatBr(budget)} − все траты`
+                : `От плана сметы ${formatBr(plan)} (бюджет не задан)`
+            }
+            tone={remain >= 0 ? 'green' : 'red'}
+            icon={remain >= 0 ? ArrowDownRight : ArrowUpRight}
+          />
+        </div>
+      </div>
+
+      {/* Смета: DIY / к оплате / перерасход */}
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          По смете (без магазина)
+        </p>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <KpiCard
+            label="Своими силами"
+            value={formatBr(diyEconomy)}
+            hint={
+              diyEconomy > 0
+                ? `Экономия · к оплате наёмным ${formatBr(expectedPaid)}`
+                : 'Отметьте % DIY в смете'
+            }
+            tone="green"
+          />
+          <KpiCard
+            label="Ещё к оплате"
+            value={formatBr(planGap)}
+            hint={`${formatBr(expectedPaid)} − оплачено ${formatBr(factOnEstimate)}`}
+            tone={planGap > 0 ? 'neutral' : 'green'}
+          />
+          <KpiCard
+            label="Перерасход"
+            value={formatBr(overspend)}
+            hint={
+              overspend > 0
+                ? 'Сверх бюджета (все траты)'
+                : hasBudget
+                  ? 'В рамках бюджета'
+                  : 'Задайте бюджет в настройках'
+            }
+            tone={overspend > 0 ? 'red' : 'green'}
+            icon={TrendingDown}
+          />
+        </div>
       </div>
 
       {diyEconomy > 0 && (
@@ -283,8 +346,8 @@ export function DashboardPage() {
       {/* Quick actions */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <QuickLink to="/estimate" label="Добавить в смету" />
-        <QuickLink to="/expenses" label="Добавить расход" />
-        <QuickLink to="/contractors" label="Контрагенты" />
+        <QuickLink to="/expenses?new=1" label="Добавить расход" />
+        <QuickLink to="/expenses?new=1&kind=shop" label="Покупка в магазине" />
         <QuickLink to="/settings" label="Проект и данные" />
       </div>
 

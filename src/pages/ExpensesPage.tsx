@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Camera,
   Pencil,
@@ -8,6 +8,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/PageHeader';
 import { Badge } from '../components/ui/badge';
@@ -182,11 +183,14 @@ export function ExpensesPage() {
   const update = useAppStore((s) => s.updateExpense);
   const remove = useAppStore((s) => s.removeExpense);
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [filterZone, setFilterZone] = useState('all');
   const [filterCat, setFilterCat] = useState('all');
   const [filterPay, setFilterPay] = useState('all');
   const [filterContractor, setFilterContractor] = useState('all');
+  /** all | estimate | shop */
+  const [filterKind, setFilterKind] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -199,10 +203,43 @@ export function ExpensesPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
+  const openCreate = (kind: ExpenseKind = 'estimate') => {
+    setEditing(null);
+    const base = emptyForm();
+    if (kind === 'shop') {
+      base.kind = 'shop';
+      // пресет: материалы + первая зона + чистовые если есть
+      const mat = categories.find((c) => /материал/i.test(c.name));
+      const del = categories.find((c) => /доставк/i.test(c.name));
+      const finish = stages.find((s) => /чистов/i.test(s.name));
+      if (zones[0]) base.zoneIds = [zones[0].id];
+      if (mat) base.categoryIds = [mat.id];
+      if (finish) base.stageIds = [finish.id];
+      // del kept for preset buttons
+      void del;
+    }
+    setForm(base);
+    setStep(0);
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      const kind =
+        searchParams.get('kind') === 'shop' ? 'shop' : 'estimate';
+      openCreate(kind);
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once from query
+  }, [searchParams]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return expenses
       .filter((e) => {
+        const estIds = getExpenseEstimateIds(e);
+        if (filterKind === 'estimate' && estIds.length === 0) return false;
+        if (filterKind === 'shop' && estIds.length > 0) return false;
         if (filterZone !== 'all' && !expenseHasZone(e, filterZone)) return false;
         if (filterCat !== 'all' && !expenseHasCategory(e, filterCat))
           return false;
@@ -217,7 +254,7 @@ export function ExpensesPage() {
         if (dateFrom && e.date < dateFrom) return false;
         if (dateTo && e.date > dateTo) return false;
         if (q) {
-          const names = getExpenseEstimateIds(e)
+          const names = estIds
             .map((id) => estimateItems.find((i) => i.id === id)?.name ?? '')
             .join(' ');
           const hay = `${e.comment} ${names}`.toLowerCase();
@@ -232,6 +269,7 @@ export function ExpensesPage() {
   }, [
     expenses,
     search,
+    filterKind,
     filterZone,
     filterCat,
     filterPay,
@@ -282,13 +320,6 @@ export function ExpensesPage() {
       payCard: '',
       payTransfer: '',
     };
-  };
-
-  const openCreate = () => {
-    setEditing(null);
-    setForm(emptyForm());
-    setStep(0);
-    setOpen(true);
   };
 
   const openEdit = (e: Expense) => {
@@ -348,14 +379,15 @@ export function ExpensesPage() {
     setForm((f) => {
       if (kind === f.kind) return f;
       if (kind === 'shop') {
+        const mat = categories.find((c) => /материал/i.test(c.name));
+        const finish = stages.find((s) => /чистов/i.test(s.name));
         return {
           ...f,
           kind: 'shop',
           estimateItemIds: [],
-          // зоны/категории выбирает пользователь сам — сбрасываем от сметы
-          zoneIds: [],
-          categoryIds: [],
-          stageIds: [],
+          zoneIds: zones[0]?.id ? [zones[0].id] : [],
+          categoryIds: mat ? [mat.id] : [],
+          stageIds: finish ? [finish.id] : [],
           payCash: '',
           payCard: '',
           payTransfer: '',
@@ -370,6 +402,44 @@ export function ExpensesPage() {
         payCash: '',
         payCard: '',
         payTransfer: '',
+      };
+    });
+  };
+
+  const applyShopPreset = (preset: 'materials' | 'delivery' | 'sanitary') => {
+    setForm((f) => {
+      const zoneId = f.zoneIds[0] ?? zones[0]?.id;
+      const findCat = (re: RegExp) =>
+        categories.find((c) => re.test(c.name))?.id;
+      const finish =
+        stages.find((s) => /чистов/i.test(s.name))?.id ?? stages[0]?.id;
+      const eng =
+        stages.find((s) => /инженер/i.test(s.name))?.id ?? finish;
+      let categoryIds: string[] = [];
+      let stageIds: string[] = finish ? [finish] : [];
+      let comment = f.comment;
+      if (preset === 'materials') {
+        const id = findCat(/материал/i);
+        if (id) categoryIds = [id];
+        if (!comment) comment = 'Материалы';
+      } else if (preset === 'delivery') {
+        const id = findCat(/доставк/i) ?? findCat(/проч/i);
+        if (id) categoryIds = [id];
+        if (!comment) comment = 'Доставка';
+      } else {
+        const id = findCat(/сантех/i) ?? findCat(/материал/i);
+        if (id) categoryIds = [id];
+        if (eng) stageIds = [eng];
+        if (!comment) comment = 'Сантехника';
+      }
+      return {
+        ...f,
+        kind: 'shop',
+        estimateItemIds: [],
+        zoneIds: zoneId ? [zoneId] : f.zoneIds,
+        categoryIds,
+        stageIds,
+        comment,
       };
     });
   };
@@ -508,10 +578,19 @@ export function ExpensesPage() {
         title="Расходы"
         subtitle={`${formatBr(total)} · ${filtered.length} записей`}
         action={
-          <Button onClick={openCreate} size="sm">
-            <Plus className="h-4 w-4" />
-            Добавить
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => openCreate('shop')}
+              size="sm"
+              variant="outline"
+            >
+              Покупка
+            </Button>
+            <Button onClick={() => openCreate('estimate')} size="sm">
+              <Plus className="h-4 w-4" />
+              Добавить
+            </Button>
+          </div>
         }
       />
 
@@ -525,14 +604,37 @@ export function ExpensesPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          onClick={() => setShowFilters((v) => !v)}
-        >
-          {showFilters ? 'Скрыть фильтры' : 'Фильтры'}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              ['all', 'Все'],
+              ['estimate', 'По смете'],
+              ['shop', 'Вне сметы'],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setFilterKind(id)}
+              className={cn(
+                'rounded-full px-3 py-1.5 text-xs font-medium transition',
+                filterKind === id
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto"
+            onClick={() => setShowFilters((v) => !v)}
+          >
+            {showFilters ? 'Скрыть фильтры' : 'Ещё фильтры'}
+          </Button>
+        </div>
         {showFilters && (
           <div className="grid gap-3 rounded-3xl border border-border bg-card p-4 sm:grid-cols-2">
             <div className="grid gap-1.5">
@@ -867,10 +969,35 @@ export function ExpensesPage() {
                 ) : (
                   <>
                     <p className="text-sm text-muted-foreground">
-                      Плитка, унитаз, доставка из магазина —{' '}
-                      <strong>не в смете</strong>. Укажите куда и что, сумма — на
-                      следующем шаге. На остаток по смете не влияет.
+                      Плитка, унитаз, доставка — <strong>не в смете</strong>.
+                      На «ещё к оплате» по смете не влияет.
                     </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => applyShopPreset('materials')}
+                      >
+                        Материалы
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => applyShopPreset('sanitary')}
+                      >
+                        Сантехника
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => applyShopPreset('delivery')}
+                      >
+                        Доставка
+                      </Button>
+                    </div>
                     <div className="grid gap-1.5">
                       <Label>Что купили *</Label>
                       <Input
