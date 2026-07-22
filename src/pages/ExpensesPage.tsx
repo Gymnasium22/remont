@@ -26,6 +26,7 @@ import {
 import { EmptyState } from '../components/ui/empty-state';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { MultiChips } from '../components/ui/multi-chips';
 import {
   Select,
   SelectContent,
@@ -62,7 +63,11 @@ import { PAYMENT_LABELS } from '../types';
 
 const METHODS = Object.keys(PAYMENT_LABELS) as PaymentMethod[];
 
+/** estimate — оплата по смете; shop — покупки вне сметы (магазин, доставка) */
+type ExpenseKind = 'estimate' | 'shop';
+
 type FormState = {
+  kind: ExpenseKind;
   date: string;
   /** Суммы по способам оплаты, Br (строки для инпутов) */
   payCash: string;
@@ -79,6 +84,7 @@ type FormState = {
 
 function emptyForm(): FormState {
   return {
+    kind: 'estimate',
     date: todayISO(),
     payCash: '',
     payCard: '',
@@ -288,10 +294,12 @@ export function ExpensesPage() {
   const openEdit = (e: Expense) => {
     setEditing(e);
     const parts = getPaymentParts(e);
+    const estIds = getExpenseEstimateIds(e);
     setForm({
+      kind: estIds.length > 0 ? 'estimate' : 'shop',
       date: e.date,
       ...partsToFormFields(parts),
-      estimateItemIds: getExpenseEstimateIds(e),
+      estimateItemIds: estIds,
       zoneIds: getExpenseZoneIds(e),
       categoryIds: getExpenseCategoryIds(e),
       stageIds: getExpenseStageIds(e),
@@ -304,15 +312,66 @@ export function ExpensesPage() {
   };
 
   const goNext = () => {
-    if (step === 0 && form.estimateItemIds.length === 0) {
-      toast.error('Выберите хотя бы одну позицию сметы');
-      return;
+    if (step === 0) {
+      if (form.kind === 'estimate') {
+        if (form.estimateItemIds.length === 0) {
+          toast.error('Выберите позиции сметы или переключитесь на «Покупка»');
+          return;
+        }
+      } else {
+        if (form.zoneIds.length === 0) {
+          toast.error('Укажите зону (куда идут материалы)');
+          return;
+        }
+        if (form.categoryIds.length === 0) {
+          toast.error('Укажите категорию (материалы, сантехника, доставка…)');
+          return;
+        }
+        if (form.stageIds.length === 0) {
+          toast.error('Укажите этап ремонта');
+          return;
+        }
+        if (!form.comment.trim()) {
+          toast.error('Напишите, что купили (плитка, унитаз, доставка…)');
+          return;
+        }
+      }
     }
     if (step === 1 && totalFromPays <= 0) {
       toast.error('Укажите сумму хотя бы по одному способу оплаты');
       return;
     }
     setStep((s) => Math.min(2, s + 1));
+  };
+
+  const setKind = (kind: ExpenseKind) => {
+    setForm((f) => {
+      if (kind === f.kind) return f;
+      if (kind === 'shop') {
+        return {
+          ...f,
+          kind: 'shop',
+          estimateItemIds: [],
+          // зоны/категории выбирает пользователь сам — сбрасываем от сметы
+          zoneIds: [],
+          categoryIds: [],
+          stageIds: [],
+          payCash: '',
+          payCard: '',
+          payTransfer: '',
+        };
+      }
+      return {
+        ...f,
+        kind: 'estimate',
+        zoneIds: [],
+        categoryIds: [],
+        stageIds: [],
+        payCash: '',
+        payCard: '',
+        payTransfer: '',
+      };
+    });
   };
 
   const toggleEstimate = (id: string) => {
@@ -382,20 +441,36 @@ export function ExpensesPage() {
       toast.error('Укажите сумму хотя бы по одному способу оплаты');
       return;
     }
-    if (form.estimateItemIds.length === 0) {
-      toast.error('Выберите хотя бы одну позицию сметы');
+    if (form.kind === 'estimate' && form.estimateItemIds.length === 0) {
+      toast.error('Выберите позиции сметы');
+      return;
+    }
+    if (form.kind === 'shop' && !form.comment.trim()) {
+      toast.error('Укажите, что купили');
       return;
     }
     if (form.zoneIds.length === 0) {
-      toast.error('У выбранных позиций нет зон — проверьте смету');
+      toast.error(
+        form.kind === 'estimate'
+          ? 'У выбранных позиций нет зон — проверьте смету'
+          : 'Укажите зону',
+      );
       return;
     }
     if (form.categoryIds.length === 0) {
-      toast.error('У выбранных позиций нет категорий — проверьте смету');
+      toast.error(
+        form.kind === 'estimate'
+          ? 'У выбранных позиций нет категорий — проверьте смету'
+          : 'Укажите категорию',
+      );
       return;
     }
     if (form.stageIds.length === 0) {
-      toast.error('У выбранных позиций нет этапов — проверьте смету');
+      toast.error(
+        form.kind === 'estimate'
+          ? 'У выбранных позиций нет этапов — проверьте смету'
+          : 'Укажите этап',
+      );
       return;
     }
 
@@ -556,7 +631,7 @@ export function ExpensesPage() {
           }
           description={
             expenses.length === 0
-              ? 'Выберите позиции сметы — зоны, категории и этапы подтянутся сами. Можно разбить оплату: наличные + безнал + перевод.'
+              ? 'Два типа: «По смете» (авансы мастерам) и «Покупка» (плитка, унитаз, доставка из магазина — вне сметы).'
               : 'Смягчите фильтры или измените период.'
           }
           actionLabel={expenses.length === 0 ? 'Добавить расход' : undefined}
@@ -595,6 +670,9 @@ export function ExpensesPage() {
                             {PAYMENT_LABELS[p.method]} {formatBr(p.amount)}
                           </Badge>
                         ))}
+                        {eItems.length === 0 && (
+                          <Badge variant="warning">Вне сметы</Badge>
+                        )}
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {formatDate(e.date)}
@@ -679,7 +757,7 @@ export function ExpensesPage() {
               {editing ? 'Редактировать расход' : 'Новый расход'}
             </DialogTitle>
             <div className="mt-3 grid grid-cols-3 gap-1.5">
-              {(['Смета', 'Оплата', 'Детали'] as const).map((label, i) => (
+              {(['Куда', 'Оплата', 'Детали'] as const).map((label, i) => (
                 <button
                   key={label}
                   type="button"
@@ -702,66 +780,150 @@ export function ExpensesPage() {
           <DialogBody>
             {step === 0 && (
               <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  Выберите позиции. Зоны, категории и этапы подтянутся сами.
-                </p>
-                <CheckList
-                  maxHeightClass="max-h-[min(40dvh,280px)]"
-                  items={estimateItems.map((i) => {
-                    const fact = selectItemFact(expenses, i.id, estimateItems);
-                    const remain = itemRemaining(i, fact);
-                    return {
-                      id: i.id,
-                      title: i.name,
-                      subtitle: `Остаток ${formatBr(remain)} · план ${formatBr(itemPlan(i))}`,
-                    };
-                  })}
-                  selected={form.estimateItemIds}
-                  onToggle={toggleEstimate}
-                  emptyLabel="Сначала добавьте позиции в смету"
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setKind('estimate')}
+                    className={cn(
+                      'rounded-2xl border px-3 py-3 text-left text-sm font-medium transition',
+                      form.kind === 'estimate'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted',
+                    )}
+                  >
+                    По смете
+                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                      Аванс / работы
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setKind('shop')}
+                    className={cn(
+                      'rounded-2xl border px-3 py-3 text-left text-sm font-medium transition',
+                      form.kind === 'shop'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted',
+                    )}
+                  >
+                    Покупка
+                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                      Магазин, доставка
+                    </span>
+                  </button>
+                </div>
 
-                {linkedToEstimate && (
-                  <div className="space-y-2 rounded-2xl bg-muted/40 p-3">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      Из сметы
+                {form.kind === 'estimate' ? (
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      Оплата работ/позиций из сметы. Зоны и категории
+                      подтянутся сами.
                     </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {form.zoneIds.map((id) => {
-                        const z = zones.find((x) => x.id === id);
-                        return (
-                          <Badge key={`z-${id}`} variant="outline">
-                            {z && (
-                              <span
-                                className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                                style={{ background: z.color }}
-                              />
-                            )}
-                            {z?.name ?? id}
-                          </Badge>
+                    <CheckList
+                      maxHeightClass="max-h-[min(36dvh,260px)]"
+                      items={estimateItems.map((i) => {
+                        const fact = selectItemFact(
+                          expenses,
+                          i.id,
+                          estimateItems,
                         );
+                        const remain = itemRemaining(i, fact);
+                        return {
+                          id: i.id,
+                          title: i.name,
+                          subtitle: `Остаток ${formatBr(remain)} · план ${formatBr(itemPlan(i))}`,
+                        };
                       })}
-                      {form.categoryIds.map((id) => {
-                        const c = categories.find((x) => x.id === id);
-                        return (
-                          <Badge key={`c-${id}`} variant="secondary">
-                            {c?.name ?? id}
-                          </Badge>
-                        );
-                      })}
-                      {form.stageIds.map((id) => {
-                        const s = stages.find((x) => x.id === id);
-                        return (
-                          <Badge key={`s-${id}`} variant="secondary">
-                            {s?.name ?? id}
-                          </Badge>
-                        );
-                      })}
+                      selected={form.estimateItemIds}
+                      onToggle={toggleEstimate}
+                      emptyLabel="Сначала добавьте позиции в смету"
+                    />
+                    {linkedToEstimate && (
+                      <div className="space-y-2 rounded-2xl bg-muted/40 p-3">
+                        <div className="flex flex-wrap gap-1.5">
+                          {form.zoneIds.map((id) => {
+                            const z = zones.find((x) => x.id === id);
+                            return (
+                              <Badge key={`z-${id}`} variant="outline">
+                                {z?.name ?? id}
+                              </Badge>
+                            );
+                          })}
+                          {form.categoryIds.map((id) => {
+                            const c = categories.find((x) => x.id === id);
+                            return (
+                              <Badge key={`c-${id}`} variant="secondary">
+                                {c?.name ?? id}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                        <p className="text-sm font-semibold tabular-nums">
+                          Остаток: {formatBr(selectedRemainingTotal)}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      Плитка, унитаз, доставка из магазина —{' '}
+                      <strong>не в смете</strong>. Укажите куда и что, сумма — на
+                      следующем шаге. На остаток по смете не влияет.
+                    </p>
+                    <div className="grid gap-1.5">
+                      <Label>Что купили *</Label>
+                      <Input
+                        value={form.comment}
+                        onChange={(e) =>
+                          setForm({ ...form, comment: e.target.value })
+                        }
+                        placeholder="Плитка Kerama, унитаз, доставка…"
+                      />
                     </div>
-                    <p className="text-sm font-semibold tabular-nums">
-                      Остаток: {formatBr(selectedRemainingTotal)}
-                    </p>
-                  </div>
+                    <div className="grid gap-1.5">
+                      <Label>Зоны *</Label>
+                      <MultiChips
+                        options={zones}
+                        selected={form.zoneIds}
+                        onToggle={(id) =>
+                          setForm((f) => ({
+                            ...f,
+                            zoneIds: toggleId(f.zoneIds, id),
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label>Категории *</Label>
+                      <MultiChips
+                        options={categories}
+                        selected={form.categoryIds}
+                        onToggle={(id) =>
+                          setForm((f) => ({
+                            ...f,
+                            categoryIds: toggleId(f.categoryIds, id),
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label>Этапы *</Label>
+                      <MultiChips
+                        options={stages.map((s) => ({
+                          id: s.id,
+                          name: s.name,
+                        }))}
+                        selected={form.stageIds}
+                        onToggle={(id) =>
+                          setForm((f) => ({
+                            ...f,
+                            stageIds: toggleId(f.stageIds, id),
+                          }))
+                        }
+                      />
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -769,8 +931,9 @@ export function ExpensesPage() {
             {step === 1 && (
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  Можно разбить: наличные + безнал + перевод. Аванс — меньше
-                  остатка ({formatBr(selectedRemainingTotal)}).
+                  {form.kind === 'estimate'
+                    ? `Можно аванс меньше остатка (${formatBr(selectedRemainingTotal)}).`
+                    : 'Сколько заплатили в магазине / за доставку.'}
                 </p>
 
                 <div className="grid grid-cols-1 gap-2">
@@ -810,20 +973,22 @@ export function ExpensesPage() {
                   </span>
                 </div>
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  disabled={selectedRemainingTotal <= 0}
-                  onClick={() =>
-                    setForm((f) => ({
-                      ...f,
-                      ...applyRemainingToCash(selectedRemainingTotal),
-                    }))
-                  }
-                >
-                  Подставить остаток {formatBr(selectedRemainingTotal)}
-                </Button>
+                {form.kind === 'estimate' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={selectedRemainingTotal <= 0}
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        ...applyRemainingToCash(selectedRemainingTotal),
+                      }))
+                    }
+                  >
+                    Подставить остаток {formatBr(selectedRemainingTotal)}
+                  </Button>
+                )}
               </div>
             )}
 
@@ -841,7 +1006,11 @@ export function ExpensesPage() {
                 </div>
 
                 <div className="grid gap-1.5">
-                  <Label>Контрагенты</Label>
+                  <Label>
+                    {form.kind === 'shop'
+                      ? 'Магазин / поставщик'
+                      : 'Контрагенты'}
+                  </Label>
                   <CheckList
                     maxHeightClass="max-h-36"
                     items={contractors.map((c) => ({
@@ -855,21 +1024,30 @@ export function ExpensesPage() {
                         contractorIds: toggleId(f.contractorIds, id),
                       }))
                     }
-                    emptyLabel="Контрагентов пока нет"
+                    emptyLabel="Можно добавить в разделе «Люди»"
                   />
                 </div>
 
-                <div className="grid gap-1.5">
-                  <Label>Комментарий</Label>
-                  <Textarea
-                    className="min-h-[72px]"
-                    value={form.comment}
-                    onChange={(e) =>
-                      setForm({ ...form, comment: e.target.value })
-                    }
-                    placeholder="Что купили / кому заплатили"
-                  />
-                </div>
+                {form.kind === 'estimate' && (
+                  <div className="grid gap-1.5">
+                    <Label>Комментарий</Label>
+                    <Textarea
+                      className="min-h-[72px]"
+                      value={form.comment}
+                      onChange={(e) =>
+                        setForm({ ...form, comment: e.target.value })
+                      }
+                      placeholder="Аванс, доплата…"
+                    />
+                  </div>
+                )}
+
+                {form.kind === 'shop' && form.comment && (
+                  <div className="rounded-2xl bg-muted/40 px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">Покупка: </span>
+                    <span className="font-medium">{form.comment}</span>
+                  </div>
+                )}
 
                 <div className="grid gap-1.5">
                   <Label>Фото чека</Label>
@@ -910,12 +1088,19 @@ export function ExpensesPage() {
                 </div>
 
                 <div className="rounded-2xl bg-muted/40 p-3 text-sm">
-                  <p className="font-semibold tabular-nums">
-                    {formatBr(totalFromPays)}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold tabular-nums">
+                      {formatBr(totalFromPays)}
+                    </p>
+                    <Badge variant={form.kind === 'shop' ? 'warning' : 'default'}>
+                      {form.kind === 'shop' ? 'Вне сметы' : 'По смете'}
+                    </Badge>
+                  </div>
                   <p className="mt-1 truncate text-muted-foreground">
-                    {form.estimateItemIds.length} поз. · {form.date}
-                    {form.comment ? ` · ${form.comment}` : ''}
+                    {form.kind === 'estimate'
+                      ? `${form.estimateItemIds.length} поз.`
+                      : form.comment || 'Покупка'}{' '}
+                    · {form.date}
                   </p>
                 </div>
               </div>
