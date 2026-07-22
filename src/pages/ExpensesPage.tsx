@@ -64,6 +64,18 @@ type FormState = {
   receiptPhoto: string | null;
 };
 
+function freeDefaults(
+  zones: { id: string }[],
+  cats: { id: string }[],
+  stages: { id: string }[],
+) {
+  return {
+    zoneIds: zones[0]?.id ? [zones[0].id] : ([] as string[]),
+    categoryIds: cats[0]?.id ? [cats[0].id] : ([] as string[]),
+    stageIds: stages[0]?.id ? [stages[0].id] : ([] as string[]),
+  };
+}
+
 function emptyForm(
   zones: { id: string }[],
   cats: { id: string }[],
@@ -74,13 +86,60 @@ function emptyForm(
     amount: '',
     paymentMethod: 'cash',
     estimateItemIds: [],
-    zoneIds: zones[0]?.id ? [zones[0].id] : [],
-    categoryIds: cats[0]?.id ? [cats[0].id] : [],
-    stageIds: stages[0]?.id ? [stages[0].id] : [],
+    ...freeDefaults(zones, cats, stages),
     contractorIds: [],
     comment: '',
     receiptPhoto: null,
   };
+}
+
+/** Зоны / категории / этапы строго из выбранных позиций сметы */
+function deriveFromEstimateItems(
+  itemIds: string[],
+  estimateItems: {
+    id: string;
+    name: string;
+    zoneIds?: string[];
+    zoneId?: string;
+    categoryId: string;
+    stageId: string;
+  }[],
+  fallback: { zoneIds: string[]; categoryIds: string[]; stageIds: string[] },
+) {
+  if (itemIds.length === 0) return fallback;
+
+  const zoneIds = new Set<string>();
+  const categoryIds = new Set<string>();
+  const stageIds = new Set<string>();
+
+  for (const id of itemIds) {
+    const item = estimateItems.find((i) => i.id === id);
+    if (!item) continue;
+    for (const z of getItemZoneIds({
+      zoneIds: item.zoneIds ?? [],
+      zoneId: item.zoneId,
+    })) {
+      zoneIds.add(z);
+    }
+    if (item.categoryId) categoryIds.add(item.categoryId);
+    if (item.stageId) stageIds.add(item.stageId);
+  }
+
+  return {
+    zoneIds: [...zoneIds],
+    categoryIds: [...categoryIds],
+    stageIds: [...stageIds],
+  };
+}
+
+function autoCommentFromItems(
+  itemIds: string[],
+  estimateItems: { id: string; name: string }[],
+): string {
+  return itemIds
+    .map((id) => estimateItems.find((i) => i.id === id)?.name)
+    .filter(Boolean)
+    .join(', ');
 }
 
 export function ExpensesPage() {
@@ -176,29 +235,30 @@ export function ExpensesPage() {
 
   const toggleEstimate = (id: string) => {
     setForm((f) => {
-      const next = toggleId(f.estimateItemIds, id);
-      const added = !f.estimateItemIds.includes(id) && next.includes(id);
-      if (!added) return { ...f, estimateItemIds: next };
+      const nextIds = toggleId(f.estimateItemIds, id);
+      const derived = deriveFromEstimateItems(
+        nextIds,
+        estimateItems,
+        freeDefaults(zones, categories, stages),
+      );
 
-      const item = estimateItems.find((i) => i.id === id);
-      if (!item) return { ...f, estimateItemIds: next };
+      const prevAuto = autoCommentFromItems(f.estimateItemIds, estimateItems);
+      const nextAuto = autoCommentFromItems(nextIds, estimateItems);
+      const commentWasAuto =
+        !f.comment.trim() || f.comment.trim() === prevAuto.trim();
 
-      const zids = getItemZoneIds(item);
       return {
         ...f,
-        estimateItemIds: next,
-        zoneIds: [...new Set([...f.zoneIds, ...zids])],
-        categoryIds: [...new Set([...f.categoryIds, item.categoryId].filter(Boolean))],
-        stageIds: [...new Set([...f.stageIds, item.stageId].filter(Boolean))],
-        comment:
-          f.comment ||
-          next
-            .map((xid) => estimateItems.find((i) => i.id === xid)?.name)
-            .filter(Boolean)
-            .join(', '),
+        estimateItemIds: nextIds,
+        zoneIds: derived.zoneIds,
+        categoryIds: derived.categoryIds,
+        stageIds: derived.stageIds,
+        comment: commentWasAuto ? nextAuto : f.comment,
       };
     });
   };
+
+  const linkedToEstimate = form.estimateItemIds.length > 0;
 
   const onPhoto = async (file: File | null) => {
     if (!file) return;
@@ -544,8 +604,8 @@ export function ExpensesPage() {
             <div className="grid gap-1.5">
               <Label>Позиции сметы (можно несколько)</Label>
               <p className="text-xs text-muted-foreground">
-                При выборе позиции зоны, категория и этап подставляются
-                автоматически.
+                Зоны, категории и этапы заполняются только из выбранных
+                позиций. Снимите позицию — связанные поля пересчитаются.
               </p>
               <MultiChips
                 options={estimateItems.map((i) => ({
@@ -559,42 +619,63 @@ export function ExpensesPage() {
             </div>
 
             <div className="grid gap-1.5">
-              <Label>Зоны (можно несколько)</Label>
+              <Label>
+                Зоны
+                {linkedToEstimate ? ' (из сметы)' : ' (можно несколько)'}
+              </Label>
+              {linkedToEstimate && (
+                <p className="text-xs text-muted-foreground">
+                  Подставлено из позиций. Можно уточнить вручную; при смене
+                  позиций сметы поля снова пересчитаются.
+                </p>
+              )}
               <MultiChips
                 options={zones}
                 selected={form.zoneIds}
                 onToggle={(id) =>
                   setForm((f) => ({
                     ...f,
-                    zoneIds: toggleId(f.zoneIds, id, { minOne: true }),
+                    zoneIds: toggleId(f.zoneIds, id, {
+                      minOne: f.estimateItemIds.length === 0,
+                    }),
                   }))
                 }
               />
             </div>
 
             <div className="grid gap-1.5">
-              <Label>Категории (можно несколько)</Label>
+              <Label>
+                Категории
+                {linkedToEstimate ? ' (из сметы)' : ' (можно несколько)'}
+              </Label>
               <MultiChips
                 options={categories}
                 selected={form.categoryIds}
                 onToggle={(id) =>
                   setForm((f) => ({
                     ...f,
-                    categoryIds: toggleId(f.categoryIds, id, { minOne: true }),
+                    categoryIds: toggleId(f.categoryIds, id, {
+                      minOne: f.estimateItemIds.length === 0,
+                    }),
                   }))
                 }
               />
             </div>
 
             <div className="grid gap-1.5">
-              <Label>Этапы (можно несколько)</Label>
+              <Label>
+                Этапы
+                {linkedToEstimate ? ' (из сметы)' : ' (можно несколько)'}
+              </Label>
               <MultiChips
                 options={stages.map((s) => ({ id: s.id, name: s.name }))}
                 selected={form.stageIds}
                 onToggle={(id) =>
                   setForm((f) => ({
                     ...f,
-                    stageIds: toggleId(f.stageIds, id, { minOne: true }),
+                    stageIds: toggleId(f.stageIds, id, {
+                      minOne: f.estimateItemIds.length === 0,
+                    }),
                   }))
                 }
               />
