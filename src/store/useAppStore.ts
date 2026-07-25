@@ -370,9 +370,15 @@ export const useAppStore = create<AppState>((set, get) => {
     },
     updateExpense: (id, patch) => {
       apply({
-        expenses: get().expenses.map((e) =>
-          e.id === id ? normalizeExpense({ ...e, ...patch }) : e,
-        ),
+        expenses: get().expenses.map((e) => {
+          if (e.id !== id) return e;
+          const next = { ...e, ...patch };
+          // Явный сброс ручного разнесения при auto-режиме
+          if ('estimateShares' in patch && patch.estimateShares == null) {
+            delete next.estimateShares;
+          }
+          return normalizeExpense(next);
+        }),
       });
     },
     removeExpense: (id) => {

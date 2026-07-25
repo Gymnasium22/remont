@@ -311,8 +311,8 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {/* Active zones */}
-      <Card>
+      {/* Active zones — chips with mini progress */}
+      <Card className="overflow-hidden">
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Зоны в работе</CardTitle>
           <Button asChild variant="ghost" size="sm">
@@ -325,19 +325,41 @@ export function DashboardPage() {
               Нет активных зон. Отметьте комнаты в настройках проекта.
             </p>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {activeZones.map((z) => (
-                <span
-                  key={z.id}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-border bg-muted/40 px-3 py-1.5 text-sm font-medium"
-                >
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ background: z.color }}
-                  />
-                  {z.name}
-                </span>
-              ))}
+            <div className="grid gap-2 sm:grid-cols-2">
+              {activeZones.map((z) => {
+                const zp = zoneProgress.find((x) => x.zone.id === z.id);
+                const progress = zp?.progress ?? 0;
+                const factZ = zp?.factZ ?? 0;
+                const planZ = zp?.planZ ?? 0;
+                return (
+                  <Link
+                    key={z.id}
+                    to="/estimate"
+                    className="group flex items-center gap-3 rounded-2xl border border-border/80 bg-muted/30 px-3 py-2.5 transition hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    <span
+                      className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                      style={{
+                        background: `conic-gradient(${z.color} ${Math.min(100, progress)}%, color-mix(in srgb, ${z.color} 18%, transparent) 0)`,
+                      }}
+                    >
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-card text-[10px] font-bold tabular-nums text-foreground">
+                        {Math.round(progress)}%
+                      </span>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold">
+                        {z.name}
+                      </span>
+                      <span className="block text-[11px] tabular-nums text-muted-foreground">
+                        {planZ > 0 || factZ > 0
+                          ? `${formatBr(factZ)} / ${formatBr(planZ)}`
+                          : 'Нет позиций'}
+                      </span>
+                    </span>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -358,35 +380,69 @@ export function DashboardPage() {
             <CardTitle className="text-base">Прогресс по зонам</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {zoneProgress.map(({ zone, planZ, factZ, progress }) => (
-              <div key={zone.id}>
-                <div className="mb-1.5 flex items-center justify-between gap-2 text-sm">
-                  <span className="flex items-center gap-2 font-medium">
-                    <span
-                      className="h-2 w-2 rounded-full"
-                      style={{ background: zone.color }}
+            {zoneProgress.map(({ zone, planZ, factZ, progress }) => {
+              const moneyPct =
+                planZ > 0 ? Math.min(150, (factZ / planZ) * 100) : factZ > 0 ? 100 : 0;
+              const overMoney = planZ > 0 && factZ > planZ;
+              return (
+                <div key={zone.id} className="rounded-2xl bg-muted/30 px-3 py-3">
+                  <div className="mb-2 flex items-center justify-between gap-2 text-sm">
+                    <span className="flex min-w-0 items-center gap-2 font-medium">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-background"
+                        style={{ background: zone.color }}
+                      />
+                      <span className="truncate">{zone.name}</span>
+                      {project.activeZones.includes(zone.id) && (
+                        <Badge variant="success">в работе</Badge>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      <span
+                        className={
+                          overMoney
+                            ? 'font-semibold text-red-600 dark:text-red-400'
+                            : ''
+                        }
+                      >
+                        {formatBr(factZ)}
+                      </span>
+                      {' / '}
+                      {formatBr(planZ)}
+                    </span>
+                  </div>
+                  <div className="mb-1 flex justify-between text-[11px] text-muted-foreground">
+                    <span>Работы {Math.round(progress)}%</span>
+                    <span>
+                      Деньги {planZ > 0 ? Math.round(moneyPct) : '—'}%
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Progress
+                      value={Math.min(100, progress)}
+                      indicatorClassName="!bg-[var(--bar)]"
+                      style={{ ['--bar' as string]: zone.color }}
                     />
-                    {zone.name}
-                    {project.activeZones.includes(zone.id) && (
-                      <Badge variant="success">в работе</Badge>
-                    )}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {formatBr(factZ)} / {formatBr(planZ)} · {Math.round(progress)}%
-                  </span>
+                    <Progress
+                      value={Math.min(100, moneyPct)}
+                      indicatorClassName={
+                        overMoney ? '!bg-red-500' : '!bg-[var(--bar)] opacity-70'
+                      }
+                      style={
+                        overMoney
+                          ? undefined
+                          : { ['--bar' as string]: zone.color }
+                      }
+                    />
+                  </div>
                 </div>
-                <Progress
-                  value={Math.min(100, progress)}
-                  indicatorClassName="!bg-[var(--bar)]"
-                  style={{ ['--bar' as string]: zone.color }}
-                />
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
       )}
 
-      {/* Charts */}
+      {/* Charts — contrast-friendly for light/dark */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
@@ -398,16 +454,40 @@ export function DashboardPage() {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={planFactChart} margin={{ left: 0, right: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} width={48} />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="hsl(var(--chart-grid, 214 32% 85%))"
+                    className="dark:opacity-40"
+                  />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fontSize: 11, fill: 'currentColor' }}
+                    className="text-muted-foreground"
+                    stroke="transparent"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: 'currentColor' }}
+                    className="text-muted-foreground"
+                    width={48}
+                    stroke="transparent"
+                  />
                   <Tooltip
                     formatter={(v) => formatBr(Number(v))}
                     contentStyle={{ borderRadius: 12 }}
                   />
                   <Legend />
-                  <Bar dataKey="plan" name="План" fill="#94a3b8" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="fact" name="Факт" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                  <Bar
+                    dataKey="plan"
+                    name="План"
+                    fill="#94a3b8"
+                    radius={[6, 6, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="fact"
+                    name="Факт"
+                    fill="#3b82f6"
+                    radius={[6, 6, 0, 0]}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -431,6 +511,7 @@ export function DashboardPage() {
                     innerRadius={55}
                     outerRadius={85}
                     paddingAngle={3}
+                    strokeWidth={2}
                   >
                     {paymentSplit.map((e) => (
                       <Cell key={e.key} fill={paymentColors[e.key]} />
@@ -589,25 +670,49 @@ function KpiCard({
   tone: 'neutral' | 'blue' | 'green' | 'red';
   icon?: typeof Wallet;
 }) {
-  const tones = {
-    neutral: 'from-slate-500/10 to-transparent',
-    blue: 'from-blue-500/10 to-transparent',
-    green: 'from-emerald-500/10 to-transparent',
-    red: 'from-red-500/10 to-transparent',
+  const shell = {
+    neutral:
+      'border-border/80 bg-gradient-to-br from-slate-500/10 via-card to-card dark:from-slate-400/10',
+    blue:
+      'border-blue-500/25 bg-gradient-to-br from-blue-500/15 via-card to-card dark:from-blue-400/15',
+    green:
+      'border-emerald-500/30 bg-gradient-to-br from-emerald-500/15 via-card to-card dark:from-emerald-400/15',
+    red:
+      'border-red-500/30 bg-gradient-to-br from-red-500/15 via-card to-card dark:from-red-400/15',
+  };
+  const valueTone = {
+    neutral: 'text-foreground',
+    blue: 'text-blue-600 dark:text-blue-400',
+    green: 'text-emerald-600 dark:text-emerald-400',
+    red: 'text-red-600 dark:text-red-400',
+  };
+  const iconTone = {
+    neutral: 'bg-muted text-muted-foreground',
+    blue: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+    green: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+    red: 'bg-red-500/15 text-red-600 dark:text-red-400',
   };
   return (
-    <Card className={`overflow-hidden bg-gradient-to-br ${tones[tone]}`}>
-      <CardContent className="p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground">
+    <Card className={`overflow-hidden shadow-sm ${shell[tone]}`}>
+      <CardContent className="p-4 md:p-5">
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {label}
           </span>
-          <Icon className="h-4 w-4 text-muted-foreground" />
+          <span
+            className={`flex h-8 w-8 items-center justify-center rounded-xl ${iconTone[tone]}`}
+          >
+            <Icon className="h-4 w-4" />
+          </span>
         </div>
-        <p className="text-lg font-bold tabular-nums tracking-tight md:text-xl">
+        <p
+          className={`text-xl font-bold tabular-nums tracking-tight md:text-2xl ${valueTone[tone]}`}
+        >
           {value}
         </p>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
+        <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+          {hint}
+        </p>
       </CardContent>
     </Card>
   );

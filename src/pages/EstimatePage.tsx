@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
 import {
+  ArrowDownWideNarrow,
   Check,
   ClipboardList,
   Copy,
+  Filter,
   GitMerge,
+  Layers,
   Pencil,
   Plus,
   Search,
@@ -173,6 +176,15 @@ export function EstimatePage() {
 
   const [search, setSearch] = useState('');
   const [filterZone, setFilterZone] = useState<string>('all');
+  const [filterCat, setFilterCat] = useState<string>('all');
+  const [filterStage, setFilterStage] = useState<string>('all');
+  /** all | unpaid | overspend | in_progress | done */
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  /** none | zone | category | stage */
+  const [groupBy, setGroupBy] = useState<string>('none');
+  /** updated | name | plan | remain | progress | overspend */
+  const [sortBy, setSortBy] = useState<string>('updated');
+  const [showFilters, setShowFilters] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<EstimateItem | null>(null);
   const [form, setForm] = useState<FormState>(() =>
@@ -186,21 +198,144 @@ export function EstimatePage() {
   const [mergeSelected, setMergeSelected] = useState<string[]>([]);
   const [mergeName, setMergeName] = useState('');
 
+  const itemMetrics = useMemo(() => {
+    const map = new Map<
+      string,
+      { plan: number; fact: number; remain: number; expected: number; over: number }
+    >();
+    for (const i of items) {
+      const plan = itemPlan(i);
+      const expected = itemExpectedPaid(i);
+      const fact = selectItemFact(expenses, i.id, items);
+      const remain = itemRemaining(i, fact);
+      const over = Math.max(0, fact - expected);
+      map.set(i.id, { plan, fact, remain, expected, over });
+    }
+    return map;
+  }, [items, expenses]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return items
-      .filter((i) => {
-        if (filterZone !== 'all' && !itemHasZone(i, filterZone)) return false;
-        if (!q) return true;
-        return (
-          i.name.toLowerCase().includes(q) ||
-          (i.note ?? '').toLowerCase().includes(q)
+    let list = items.filter((i) => {
+      if (filterZone !== 'all' && !itemHasZone(i, filterZone)) return false;
+      if (filterCat !== 'all' && i.categoryId !== filterCat) return false;
+      if (filterStage !== 'all' && i.stageId !== filterStage) return false;
+      const m = itemMetrics.get(i.id);
+      if (filterStatus === 'unpaid' && (!m || m.remain <= 0.01)) return false;
+      if (filterStatus === 'overspend' && (!m || m.over <= 0.01)) return false;
+      if (filterStatus === 'in_progress' && (i.progress <= 0 || i.progress >= 100))
+        return false;
+      if (filterStatus === 'done' && i.progress < 100) return false;
+      if (!q) return true;
+      return (
+        i.name.toLowerCase().includes(q) ||
+        (i.note ?? '').toLowerCase().includes(q)
+      );
+    });
+
+    const cmp = (a: EstimateItem, b: EstimateItem) => {
+      const ma = itemMetrics.get(a.id);
+      const mb = itemMetrics.get(b.id);
+      switch (sortBy) {
+        case 'name':
+          return a.name.localeCompare(b.name, 'ru');
+        case 'plan':
+          return (mb?.plan ?? 0) - (ma?.plan ?? 0);
+        case 'remain':
+          return (mb?.remain ?? 0) - (ma?.remain ?? 0);
+        case 'progress':
+          return b.progress - a.progress;
+        case 'overspend':
+          return (mb?.over ?? 0) - (ma?.over ?? 0);
+        case 'updated':
+        default:
+          return b.updatedAt.localeCompare(a.updatedAt);
+      }
+    };
+    list = [...list].sort(cmp);
+    return list;
+  }, [
+    items,
+    search,
+    filterZone,
+    filterCat,
+    filterStage,
+    filterStatus,
+    sortBy,
+    itemMetrics,
+  ]);
+
+  type GroupSection = { key: string; title: string; color?: string; items: EstimateItem[] };
+
+  const grouped = useMemo((): GroupSection[] => {
+    if (groupBy === 'none') {
+      return [{ key: 'all', title: '', items: filtered }];
+    }
+    const sections: GroupSection[] = [];
+    const push = (key: string, title: string, color: string | undefined, item: EstimateItem) => {
+      let sec = sections.find((s) => s.key === key);
+      if (!sec) {
+        sec = { key, title, color, items: [] };
+        sections.push(sec);
+      }
+      sec.items.push(item);
+    };
+
+    if (groupBy === 'zone') {
+      for (const item of filtered) {
+        const zids = getItemZoneIds(item);
+        if (zids.length === 0) {
+          push('_none', 'Без зоны', undefined, item);
+        } else {
+          // Позиция в нескольких зонах — в первой (основной) группе
+          const z = zones.find((x) => x.id === zids[0]);
+          push(zids[0], z?.name ?? 'Зона', z?.color, item);
+        }
+      }
+      // Порядок зон как в справочнике
+      sections.sort((a, b) => {
+        if (a.key === '_none') return 1;
+        if (b.key === '_none') return -1;
+        const ia = zones.findIndex((z) => z.id === a.key);
+        const ib = zones.findIndex((z) => z.id === b.key);
+        return ia - ib;
+      });
+    } else if (groupBy === 'category') {
+      for (const item of filtered) {
+        const c = categories.find((x) => x.id === item.categoryId);
+        push(item.categoryId || '_none', c?.name ?? 'Без категории', c?.color, item);
+      }
+      sections.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+    } else if (groupBy === 'stage') {
+      for (const item of filtered) {
+        const s = stages.find((x) => x.id === item.stageId);
+        push(
+          item.stageId || '_none',
+          s?.name ?? 'Без этапа',
+          undefined,
+          item,
         );
-      })
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  }, [items, search, filterZone]);
+      }
+      sections.sort((a, b) => {
+        const oa = stages.find((s) => s.id === a.key)?.order ?? 999;
+        const ob = stages.find((s) => s.id === b.key)?.order ?? 999;
+        return oa - ob;
+      });
+    }
+    return sections;
+  }, [filtered, groupBy, zones, categories, stages]);
 
   const totalPlan = items.reduce((s, i) => s + itemPlan(i), 0);
+  const filteredPlan = filtered.reduce(
+    (s, i) => s + (itemMetrics.get(i.id)?.plan ?? 0),
+    0,
+  );
+  const activeFilterCount = [
+    filterZone !== 'all',
+    filterCat !== 'all',
+    filterStage !== 'all',
+    filterStatus !== 'all',
+  ].filter(Boolean).length;
 
   const toggleFormZone = (id: string) => {
     setForm((f) => {
@@ -359,8 +494,8 @@ export function EstimatePage() {
         }
       />
 
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative flex-1">
+      <div className="space-y-3">
+        <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="pl-10"
@@ -369,19 +504,171 @@ export function EstimatePage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <Select value={filterZone} onValueChange={setFilterZone}>
-          <SelectTrigger className="sm:w-48">
-            <SelectValue placeholder="Зона" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все зоны</SelectItem>
-            {zones.map((z) => (
-              <SelectItem key={z.id} value={z.id}>
-                {z.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              ['all', 'Все'],
+              ['unpaid', 'Недоплата'],
+              ['overspend', 'Перерасход'],
+              ['in_progress', 'В работе'],
+              ['done', 'Готово'],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setFilterStatus(id)}
+              className={cn(
+                'rounded-full px-3 py-1.5 text-xs font-medium transition',
+                filterStatus === id
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto gap-1.5"
+            onClick={() => setShowFilters((v) => !v)}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            {showFilters ? 'Скрыть' : 'Фильтры'}
+            {activeFilterCount > 0 && (
+              <span className="rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+        </div>
+
+        {showFilters && (
+          <div className="grid gap-3 rounded-3xl border border-border bg-card p-4 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label>Зона</Label>
+              <Select value={filterZone} onValueChange={setFilterZone}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все зоны</SelectItem>
+                  {zones.map((z) => (
+                    <SelectItem key={z.id} value={z.id}>
+                      {z.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Категория</Label>
+              <Select value={filterCat} onValueChange={setFilterCat}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Этап</Label>
+              <Select value={filterStage} onValueChange={setFilterStage}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все</SelectItem>
+                  {stages.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="flex items-center gap-1.5">
+                <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+                Сортировка
+              </Label>
+              <Select value={sortBy} onValueChange={setSortBy}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="updated">Недавно обновлённые</SelectItem>
+                  <SelectItem value="name">По названию</SelectItem>
+                  <SelectItem value="plan">По плану (↓)</SelectItem>
+                  <SelectItem value="remain">По остатку оплаты (↓)</SelectItem>
+                  <SelectItem value="progress">По прогрессу (↓)</SelectItem>
+                  <SelectItem value="overspend">По перерасходу (↓)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label className="flex items-center gap-1.5">
+                <Layers className="h-3.5 w-3.5" />
+                Группировка
+              </Label>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ['none', 'Список'],
+                    ['zone', 'По зонам'],
+                    ['category', 'По категориям'],
+                    ['stage', 'По этапам'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setGroupBy(id)}
+                    className={cn(
+                      'rounded-full px-3 py-1.5 text-xs font-medium transition',
+                      groupBy === id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {activeFilterCount > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="sm:col-span-2"
+                onClick={() => {
+                  setFilterZone('all');
+                  setFilterCat('all');
+                  setFilterStage('all');
+                  setFilterStatus('all');
+                }}
+              >
+                Сбросить фильтры
+              </Button>
+            )}
+          </div>
+        )}
+
+        {filtered.length > 0 && filtered.length !== items.length && (
+          <p className="text-xs text-muted-foreground">
+            Показано {filtered.length} из {items.length} · план выборки{' '}
+            {formatBr(filteredPlan)}
+          </p>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -397,147 +684,199 @@ export function EstimatePage() {
           onAction={items.length === 0 ? openCreate : undefined}
         />
       ) : (
-        <div className="space-y-3">
-          {filtered.map((item) => {
-            const zoneIds = getItemZoneIds(item);
-            const itemZones = zoneIds
-              .map((id) => zones.find((z) => z.id === id))
-              .filter(Boolean) as typeof zones;
-            const cat = categories.find((c) => c.id === item.categoryId);
-            const stage = stages.find((s) => s.id === item.stageId);
-            const plan = itemPlan(item);
-            const extrasPlan = itemExtrasPlan(item);
-            const diy = itemDiyEconomy(item);
-            const expected = itemExpectedPaid(item);
-            const fact = selectItemFact(expenses, item.id, items);
-            const remain = itemRemaining(item, fact);
-            const over = fact > expected && expected >= 0 && plan > 0;
-            const selfPct = item.selfDonePercent ?? 0;
-            const extras = getItemExtras(item);
+        <div className="space-y-5">
+          {grouped.map((section) => {
+            const sectionPlan = section.items.reduce(
+              (s, i) => s + (itemMetrics.get(i.id)?.plan ?? 0),
+              0,
+            );
             return (
-              <Card key={item.id} className="overflow-hidden">
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold leading-snug">{item.name}</h3>
-                      <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        {itemZones.map((zone) => (
-                          <Badge key={zone.id} variant="outline">
-                            <span
-                              className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                              style={{ background: zone.color }}
-                            />
-                            {zone.name}
-                          </Badge>
-                        ))}
-                        {zoneIds.length > 1 && (
-                          <Badge variant="default">
-                            {zoneIds.length} зоны
-                          </Badge>
-                        )}
-                        {cat && <Badge variant="secondary">{cat.name}</Badge>}
-                        {stage && <Badge variant="secondary">{stage.name}</Badge>}
-                        {extras.length > 0 && (
-                          <Badge variant="warning">
-                            +{extras.length} допработ
-                          </Badge>
-                        )}
-                        {selfPct > 0 && (
-                          <Badge variant="success">
-                            Своими силами {selfPct}%
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {item.quantity} {item.unit} × {formatBr(item.unitPrice)}
-                        {extrasPlan > 0 && (
-                          <> + допы {formatBr(extrasPlan)}</>
-                        )}{' '}
-                        ={' '}
-                        <span className="font-semibold text-foreground">
-                          {formatBr(plan)}
-                        </span>
-                        {diy > 0 && (
-                          <>
-                            {' '}
-                            · экономия{' '}
-                            <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                              {formatBr(diy)}
-                            </span>
-                          </>
-                        )}
-                        {' '}
-                        · оплачено{' '}
+              <div key={section.key} className="space-y-3">
+                {section.title && (
+                  <div className="flex items-center justify-between gap-2 px-0.5">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold">
+                      {section.color && (
                         <span
-                          className={over ? 'font-medium text-red-500' : ''}
-                        >
-                          {formatBr(fact)}
-                        </span>
-                        {' '}
-                        · остаток{' '}
-                        <span className="font-medium text-foreground">
-                          {formatBr(remain)}
-                        </span>
-                      </p>
-                      {extras.length > 0 && (
-                        <ul className="mt-2 space-y-1 rounded-2xl bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                          {extras.map((ex) => (
-                            <li
-                              key={ex.id}
-                              className="flex justify-between gap-2"
-                            >
-                              <span className="truncate">
-                                {ex.name} · {ex.quantity} {ex.unit} ×{' '}
-                                {formatBr(ex.unitPrice)}
-                              </span>
-                              <span className="shrink-0 font-medium text-foreground">
-                                {formatBr(ex.quantity * ex.unitPrice)}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ background: section.color }}
+                        />
                       )}
-                      <div className="mt-3">
-                        <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                          <span>Выполнение</span>
-                          <span>{item.progress}%</span>
-                        </div>
-                        <Progress value={item.progress} />
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-col gap-1">
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        onClick={() => openEdit(item)}
-                        title="Изменить"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        onClick={() => {
-                          duplicate(item.id);
-                          toast.success('Позиция продублирована');
-                        }}
-                        title="Дублировать"
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        className="text-destructive"
-                        onClick={() => setDeleteId(item.id)}
-                        title="Удалить"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                      {section.title}
+                      <span className="font-normal text-muted-foreground">
+                        · {section.items.length}
+                      </span>
+                    </h3>
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {formatBr(sectionPlan)}
+                    </span>
                   </div>
-                </CardContent>
-              </Card>
+                )}
+                {section.items.map((item) => {
+                  const zoneIds = getItemZoneIds(item);
+                  const itemZones = zoneIds
+                    .map((id) => zones.find((z) => z.id === id))
+                    .filter(Boolean) as typeof zones;
+                  const cat = categories.find((c) => c.id === item.categoryId);
+                  const stage = stages.find((s) => s.id === item.stageId);
+                  const m = itemMetrics.get(item.id);
+                  const plan = m?.plan ?? itemPlan(item);
+                  const extrasPlan = itemExtrasPlan(item);
+                  const diy = itemDiyEconomy(item);
+                  const fact = m?.fact ?? 0;
+                  const remain = m?.remain ?? 0;
+                  const over = (m?.over ?? 0) > 0.01;
+                  const selfPct = item.selfDonePercent ?? 0;
+                  const extras = getItemExtras(item);
+                  return (
+                    <Card
+                      key={item.id}
+                      className={cn(
+                        'overflow-hidden',
+                        over && 'border-red-500/30',
+                      )}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <h3 className="font-semibold leading-snug">
+                              {item.name}
+                            </h3>
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {itemZones.map((zone) => (
+                                <Badge key={zone.id} variant="outline">
+                                  <span
+                                    className="mr-1.5 inline-block h-2 w-2 rounded-full"
+                                    style={{ background: zone.color }}
+                                  />
+                                  {zone.name}
+                                </Badge>
+                              ))}
+                              {zoneIds.length > 1 && (
+                                <Badge variant="default">
+                                  {zoneIds.length} зоны
+                                </Badge>
+                              )}
+                              {cat && (
+                                <Badge variant="secondary">{cat.name}</Badge>
+                              )}
+                              {stage && (
+                                <Badge variant="secondary">{stage.name}</Badge>
+                              )}
+                              {extras.length > 0 && (
+                                <Badge variant="warning">
+                                  +{extras.length} допработ
+                                </Badge>
+                              )}
+                              {selfPct > 0 && (
+                                <Badge variant="success">
+                                  Своими силами {selfPct}%
+                                </Badge>
+                              )}
+                              {over && (
+                                <Badge variant="danger">Перерасход</Badge>
+                              )}
+                            </div>
+                            <p className="mt-2 text-sm text-muted-foreground">
+                              {item.quantity} {item.unit} ×{' '}
+                              {formatBr(item.unitPrice)}
+                              {extrasPlan > 0 && (
+                                <> + допы {formatBr(extrasPlan)}</>
+                              )}{' '}
+                              ={' '}
+                              <span className="font-semibold text-foreground">
+                                {formatBr(plan)}
+                              </span>
+                              {diy > 0 && (
+                                <>
+                                  {' '}
+                                  · экономия{' '}
+                                  <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                                    {formatBr(diy)}
+                                  </span>
+                                </>
+                              )}{' '}
+                              · оплачено{' '}
+                              <span
+                                className={
+                                  over ? 'font-medium text-red-500' : ''
+                                }
+                              >
+                                {formatBr(fact)}
+                              </span>{' '}
+                              · остаток{' '}
+                              <span
+                                className={cn(
+                                  'font-medium',
+                                  remain > 0.01
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-foreground',
+                                )}
+                              >
+                                {formatBr(remain)}
+                              </span>
+                            </p>
+                            {extras.length > 0 && (
+                              <ul className="mt-2 space-y-1 rounded-2xl bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                                {extras.map((ex) => (
+                                  <li
+                                    key={ex.id}
+                                    className="flex justify-between gap-2"
+                                  >
+                                    <span className="truncate">
+                                      {ex.name} · {ex.quantity} {ex.unit} ×{' '}
+                                      {formatBr(ex.unitPrice)}
+                                    </span>
+                                    <span className="shrink-0 font-medium text-foreground">
+                                      {formatBr(ex.quantity * ex.unitPrice)}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            <div className="mt-3">
+                              <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                                <span>Выполнение</span>
+                                <span>{item.progress}%</span>
+                              </div>
+                              <Progress value={item.progress} />
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 flex-col gap-1">
+                            <Button
+                              size="icon-sm"
+                              variant="ghost"
+                              onClick={() => openEdit(item)}
+                              title="Изменить"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon-sm"
+                              variant="ghost"
+                              onClick={() => {
+                                duplicate(item.id);
+                                toast.success('Позиция продублирована');
+                              }}
+                              title="Дублировать"
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon-sm"
+                              variant="ghost"
+                              className="text-destructive"
+                              onClick={() => setDeleteId(item.id)}
+                              title="Удалить"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
             );
           })}
         </div>

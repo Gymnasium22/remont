@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Camera,
+  ChevronLeft,
+  ChevronRight,
+  Paperclip,
   Pencil,
   Plus,
   Receipt,
   Search,
+  SplitSquareHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -38,10 +42,13 @@ import {
 import { Textarea } from '../components/ui/textarea';
 import { formatBr } from '../lib/currency';
 import {
+  allocateExpenseByPlan,
+  equalShares,
   expenseHasCategory,
   expenseHasContractor,
   expenseHasPaymentMethod,
   expenseHasZone,
+  getExpenseAttachments,
   getExpenseCategoryIds,
   getExpenseContractorIds,
   getExpenseEstimateIds,
@@ -58,7 +65,12 @@ import {
   itemPlan,
   itemRemaining,
 } from '../lib/zones';
-import { selectItemFact, todayISO, useAppStore } from '../store/useAppStore';
+import {
+  buildPlanByItemId,
+  selectItemFact,
+  todayISO,
+  useAppStore,
+} from '../store/useAppStore';
 import type { Expense, PaymentMethod, PaymentPart } from '../types';
 import { PAYMENT_LABELS } from '../types';
 
@@ -80,7 +92,14 @@ type FormState = {
   stageIds: string[];
   contractorIds: string[];
   comment: string;
-  receiptPhoto: string | null;
+  /** Несколько фото чеков (data URL) */
+  attachments: string[];
+  /**
+   * Ручное разнесение: itemId → сумма (строка для инпута).
+   * Пустые/не заданы → пропорционально плану.
+   */
+  shareMode: 'auto' | 'manual';
+  shares: Record<string, string>;
 };
 
 function emptyForm(): FormState {
@@ -96,7 +115,9 @@ function emptyForm(): FormState {
     stageIds: [],
     contractorIds: [],
     comment: '',
-    receiptPhoto: null,
+    attachments: [],
+    shareMode: 'auto',
+    shares: {},
   };
 }
 
@@ -201,7 +222,10 @@ export function ExpensesPage() {
   /** 0 — смета, 1 — оплата, 2 — детали */
   const [step, setStep] = useState(0);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [gallery, setGallery] = useState<{
+    urls: string[];
+    index: number;
+  } | null>(null);
 
   const openCreate = (kind: ExpenseKind = 'estimate') => {
     setEditing(null);
@@ -326,6 +350,17 @@ export function ExpensesPage() {
     setEditing(e);
     const parts = getPaymentParts(e);
     const estIds = getExpenseEstimateIds(e);
+    const hasManual =
+      e.estimateShares &&
+      estIds.length > 1 &&
+      estIds.some((id) => (e.estimateShares?.[id] ?? 0) > 0);
+    const shares: Record<string, string> = {};
+    if (hasManual && e.estimateShares) {
+      for (const id of estIds) {
+        const v = e.estimateShares[id];
+        shares[id] = v != null && v > 0 ? String(v) : '0';
+      }
+    }
     setForm({
       kind: estIds.length > 0 ? 'estimate' : 'shop',
       date: e.date,
@@ -336,7 +371,9 @@ export function ExpensesPage() {
       stageIds: getExpenseStageIds(e),
       contractorIds: getExpenseContractorIds(e),
       comment: e.comment,
-      receiptPhoto: e.receiptPhoto,
+      attachments: getExpenseAttachments(e),
+      shareMode: hasManual ? 'manual' : 'auto',
+      shares,
     });
     setStep(0);
     setOpen(true);
@@ -492,15 +529,46 @@ export function ExpensesPage() {
     });
   };
 
-  const onPhoto = async (file: File | null) => {
-    if (!file) return;
+  const onPhotos = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const max = 8;
+    const remaining = max - form.attachments.length;
+    if (remaining <= 0) {
+      toast.error(`Не больше ${max} вложений`);
+      return;
+    }
+    const list = Array.from(files).slice(0, remaining);
     try {
-      const data = await compressImage(file);
-      setForm((f) => ({ ...f, receiptPhoto: data }));
-      toast.success('Фото чека прикреплено');
+      const compressed = await Promise.all(list.map((f) => compressImage(f)));
+      setForm((f) => ({
+        ...f,
+        attachments: [...f.attachments, ...compressed],
+      }));
+      toast.success(
+        compressed.length === 1
+          ? 'Фото прикреплено'
+          : `Прикреплено: ${compressed.length}`,
+      );
     } catch {
       toast.error('Не удалось обработать фото');
     }
+  };
+
+  const removeAttachment = (index: number) => {
+    setForm((f) => ({
+      ...f,
+      attachments: f.attachments.filter((_, i) => i !== index),
+    }));
+  };
+
+  const applyAutoSharesToForm = (itemIds: string[], amount: number) => {
+    const planMap = buildPlanByItemId(estimateItems);
+    const alloc = allocateExpenseByPlan(amount, itemIds, planMap);
+    const shares: Record<string, string> = {};
+    for (const id of itemIds) {
+      shares[id] = String(alloc[id] ?? 0);
+    }
+    return shares;
   };
 
   const save = () => {
@@ -544,6 +612,28 @@ export function ExpensesPage() {
       return;
     }
 
+    let estimateShares: Record<string, number> | undefined = undefined;
+    if (
+      form.kind === 'estimate' &&
+      form.shareMode === 'manual' &&
+      form.estimateItemIds.length > 1
+    ) {
+      const shares: Record<string, number> = {};
+      let sum = 0;
+      for (const id of form.estimateItemIds) {
+        const v = Math.round((Number(form.shares[id]) || 0) * 100) / 100;
+        shares[id] = v;
+        sum += v;
+      }
+      if (Math.abs(sum - amount) > 0.05) {
+        toast.error(
+          `Сумма по позициям (${formatBr(sum)}) ≠ итого (${formatBr(amount)})`,
+        );
+        return;
+      }
+      estimateShares = shares;
+    }
+
     const payload = {
       date: form.date || todayISO(),
       amount,
@@ -560,7 +650,10 @@ export function ExpensesPage() {
       contractorIds: form.contractorIds,
       contractorId: form.contractorIds[0] ?? null,
       comment: form.comment.trim(),
-      receiptPhoto: form.receiptPhoto,
+      attachments: form.attachments,
+      receiptPhoto: form.attachments[0] ?? null,
+      /** always set so auto mode clears previous manual shares */
+      estimateShares,
     };
     if (editing) {
       update(editing.id, payload);
@@ -758,6 +851,12 @@ export function ExpensesPage() {
               .map((id) => estimateItems.find((i) => i.id === id))
               .filter(Boolean) as typeof estimateItems;
             const parts = getPaymentParts(e);
+            const atts = getExpenseAttachments(e);
+            const planMap = buildPlanByItemId(estimateItems);
+            const hasManual =
+              e.estimateShares &&
+              eItems.length > 1 &&
+              eItems.some((it) => (e.estimateShares?.[it.id] ?? 0) > 0);
             return (
               <Card key={e.id}>
                 <CardContent className="p-4">
@@ -774,6 +873,12 @@ export function ExpensesPage() {
                         ))}
                         {eItems.length === 0 && (
                           <Badge variant="warning">Вне сметы</Badge>
+                        )}
+                        {hasManual && (
+                          <Badge variant="outline">
+                            <SplitSquareHorizontal className="mr-1 h-3 w-3" />
+                            Вручную
+                          </Badge>
                         )}
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">
@@ -800,26 +905,53 @@ export function ExpensesPage() {
                             {st.name}
                           </Badge>
                         ))}
-                        {eItems.map((item) => (
-                          <Badge key={item.id} variant="default">
-                            Смета: {item.name}
-                          </Badge>
-                        ))}
+                        {eItems.map((item) => {
+                          const share = hasManual
+                            ? e.estimateShares?.[item.id]
+                            : undefined;
+                          return (
+                            <Badge key={item.id} variant="default">
+                              {item.name}
+                              {share != null
+                                ? ` · ${formatBr(share)}`
+                                : eItems.length > 1
+                                  ? ` · ${formatBr(
+                                      allocateExpenseByPlan(
+                                        e.amount,
+                                        eItems.map((i) => i.id),
+                                        planMap,
+                                      )[item.id] ?? 0,
+                                    )}`
+                                  : ''}
+                            </Badge>
+                          );
+                        })}
                         {eContractors.map((c) => (
                           <Badge key={c.id} variant="outline">
                             {c.name}
                           </Badge>
                         ))}
-                        {e.receiptPhoto && (
-                          <button
-                            type="button"
-                            className="text-xs text-primary underline"
-                            onClick={() => setPhotoPreview(e.receiptPhoto)}
-                          >
-                            Чек
-                          </button>
-                        )}
                       </div>
+                      {atts.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {atts.map((src, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              className="h-12 w-12 overflow-hidden rounded-lg border border-border"
+                              onClick={() =>
+                                setGallery({ urls: atts, index: idx })
+                              }
+                            >
+                              <img
+                                src={src}
+                                alt={`Чек ${idx + 1}`}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="flex shrink-0 gap-1">
                       <Button
@@ -1116,6 +1248,180 @@ export function ExpensesPage() {
                     Подставить остаток {formatBr(selectedRemainingTotal)}
                   </Button>
                 )}
+
+                {form.kind === 'estimate' &&
+                  form.estimateItemIds.length > 1 &&
+                  totalFromPays > 0 && (
+                    <div className="space-y-3 rounded-2xl border border-border p-3">
+                      <div className="flex items-start gap-2">
+                        <SplitSquareHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium">
+                            Разнести по позициям
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            По умолчанию — пропорционально плану сметы.
+                            Можно указать суммы вручную.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForm((f) => ({ ...f, shareMode: 'auto' }))
+                          }
+                          className={cn(
+                            'rounded-xl border px-3 py-2 text-xs font-medium transition',
+                            form.shareMode === 'auto'
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border text-muted-foreground',
+                          )}
+                        >
+                          По плану
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForm((f) => ({
+                              ...f,
+                              shareMode: 'manual',
+                              shares: applyAutoSharesToForm(
+                                f.estimateItemIds,
+                                totalFromPays,
+                              ),
+                            }))
+                          }
+                          className={cn(
+                            'rounded-xl border px-3 py-2 text-xs font-medium transition',
+                            form.shareMode === 'manual'
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border text-muted-foreground',
+                          )}
+                        >
+                          Вручную
+                        </button>
+                      </div>
+                      {form.shareMode === 'auto' ? (
+                        <ul className="space-y-1.5 text-xs text-muted-foreground">
+                          {form.estimateItemIds.map((id) => {
+                            const item = estimateItems.find((i) => i.id === id);
+                            const planMap = buildPlanByItemId(estimateItems);
+                            const share =
+                              allocateExpenseByPlan(
+                                totalFromPays,
+                                form.estimateItemIds,
+                                planMap,
+                              )[id] ?? 0;
+                            return (
+                              <li
+                                key={id}
+                                className="flex justify-between gap-2"
+                              >
+                                <span className="truncate">
+                                  {item?.name ?? id}
+                                </span>
+                                <span className="shrink-0 font-medium text-foreground tabular-nums">
+                                  {formatBr(share)}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <div className="space-y-2">
+                          {form.estimateItemIds.map((id) => {
+                            const item = estimateItems.find((i) => i.id === id);
+                            return (
+                              <div
+                                key={id}
+                                className="grid grid-cols-[1fr_minmax(0,6.5rem)] items-center gap-2"
+                              >
+                                <span className="truncate text-sm">
+                                  {item?.name ?? id}
+                                </span>
+                                <Input
+                                  type="number"
+                                  inputMode="decimal"
+                                  className="h-9 text-right tabular-nums"
+                                  value={form.shares[id] ?? ''}
+                                  onChange={(e) =>
+                                    setForm((f) => ({
+                                      ...f,
+                                      shares: {
+                                        ...f.shares,
+                                        [id]: e.target.value,
+                                      },
+                                    }))
+                                  }
+                                />
+                              </div>
+                            );
+                          })}
+                          {(() => {
+                            const shareSum = form.estimateItemIds.reduce(
+                              (s, id) =>
+                                s + (Number(form.shares[id]) || 0),
+                              0,
+                            );
+                            const ok =
+                              Math.abs(shareSum - totalFromPays) <= 0.05;
+                            return (
+                              <p
+                                className={cn(
+                                  'text-xs tabular-nums',
+                                  ok
+                                    ? 'text-muted-foreground'
+                                    : 'font-medium text-red-500',
+                                )}
+                              >
+                                Сумма долей: {formatBr(shareSum)}
+                                {!ok && ` (нужно ${formatBr(totalFromPays)})`}
+                              </p>
+                            );
+                          })()}
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() =>
+                                setForm((f) => ({
+                                  ...f,
+                                  shares: Object.fromEntries(
+                                    Object.entries(
+                                      equalShares(
+                                        totalFromPays,
+                                        f.estimateItemIds,
+                                      ),
+                                    ).map(([k, v]) => [k, String(v)]),
+                                  ),
+                                }))
+                              }
+                            >
+                              Поровну
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                setForm((f) => ({
+                                  ...f,
+                                  shares: applyAutoSharesToForm(
+                                    f.estimateItemIds,
+                                    totalFromPays,
+                                  ),
+                                }))
+                              }
+                            >
+                              Как по плану
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
               </div>
             )}
 
@@ -1177,40 +1483,66 @@ export function ExpensesPage() {
                 )}
 
                 <div className="grid gap-1.5">
-                  <Label>Фото чека</Label>
-                  <div className="flex items-center gap-2">
-                    <label className="inline-flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm font-medium hover:bg-muted">
-                      <Camera className="h-4 w-4" />
-                      {form.receiptPhoto ? 'Заменить' : 'Прикрепить'}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        className="hidden"
-                        onChange={(ev) =>
-                          onPhoto(ev.target.files?.[0] ?? null)
-                        }
-                      />
-                    </label>
-                    {form.receiptPhoto && (
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        onClick={() =>
-                          setForm({ ...form, receiptPhoto: null })
-                        }
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
+                  <Label className="flex items-center gap-1.5">
+                    <Paperclip className="h-3.5 w-3.5" />
+                    Чеки и вложения
+                    {form.attachments.length > 0 && (
+                      <span className="text-muted-foreground">
+                        ({form.attachments.length}/8)
+                      </span>
                     )}
-                  </div>
-                  {form.receiptPhoto && (
-                    <img
-                      src={form.receiptPhoto}
-                      alt="Чек"
-                      className="mx-auto max-h-28 rounded-2xl border object-contain"
+                  </Label>
+                  <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-3 text-sm font-medium hover:bg-muted">
+                    <Camera className="h-4 w-4" />
+                    {form.attachments.length === 0
+                      ? 'Добавить фото'
+                      : 'Ещё фото'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      multiple
+                      className="hidden"
+                      onChange={(ev) => {
+                        void onPhotos(ev.target.files);
+                        ev.target.value = '';
+                      }}
                     />
+                  </label>
+                  {form.attachments.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {form.attachments.map((src, idx) => (
+                        <div
+                          key={`${idx}-${src.slice(0, 24)}`}
+                          className="group relative aspect-square overflow-hidden rounded-xl border border-border"
+                        >
+                          <button
+                            type="button"
+                            className="h-full w-full"
+                            onClick={() =>
+                              setGallery({
+                                urls: form.attachments,
+                                index: idx,
+                              })
+                            }
+                          >
+                            <img
+                              src={src}
+                              alt={`Вложение ${idx + 1}`}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            className="absolute right-1 top-1 rounded-full bg-background/90 p-1 text-destructive shadow"
+                            onClick={() => removeAttachment(idx)}
+                            aria-label="Удалить"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
 
@@ -1265,17 +1597,84 @@ export function ExpensesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!photoPreview} onOpenChange={() => setPhotoPreview(null)}>
-        <DialogContent className="max-w-md">
+      <Dialog
+        open={!!gallery}
+        onOpenChange={(o) => !o && setGallery(null)}
+      >
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Фото чека</DialogTitle>
+            <DialogTitle>
+              {gallery && gallery.urls.length > 1
+                ? `Вложение ${gallery.index + 1} / ${gallery.urls.length}`
+                : 'Чек / вложение'}
+            </DialogTitle>
           </DialogHeader>
-          {photoPreview && (
-            <img
-              src={photoPreview}
-              alt="Чек"
-              className="max-h-[70vh] w-full rounded-2xl object-contain"
-            />
+          {gallery && (
+            <div className="space-y-3">
+              <img
+                src={gallery.urls[gallery.index]}
+                alt="Вложение"
+                className="max-h-[70vh] w-full rounded-2xl object-contain"
+              />
+              {gallery.urls.length > 1 && (
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setGallery((g) =>
+                        g
+                          ? {
+                              ...g,
+                              index:
+                                (g.index - 1 + g.urls.length) % g.urls.length,
+                            }
+                          : g,
+                      )
+                    }
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Назад
+                  </Button>
+                  <div className="flex gap-1">
+                    {gallery.urls.map((_, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={cn(
+                          'h-2 w-2 rounded-full transition',
+                          i === gallery.index
+                            ? 'bg-primary'
+                            : 'bg-muted-foreground/40',
+                        )}
+                        onClick={() =>
+                          setGallery((g) => (g ? { ...g, index: i } : g))
+                        }
+                      />
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setGallery((g) =>
+                        g
+                          ? {
+                              ...g,
+                              index: (g.index + 1) % g.urls.length,
+                            }
+                          : g,
+                      )
+                    }
+                  >
+                    Далее
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>

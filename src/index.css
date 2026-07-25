@@ -77,9 +77,27 @@
   }
 }
 
-/* Recharts tooltip polish */
+/* Recharts — readable in light and dark */
 .recharts-default-tooltip {
   border-radius: 12px !important;
   border: 1px solid var(--color-border) !important;
   background: var(--color-card) !important;
+  color: var(--color-card-foreground) !important;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--color-border);
+  opacity: 0.85;
+}
+
+.dark .recharts-cartesian-grid-horizontal line,
+.dark .recharts-cartesian-grid-vertical line {
+  opacity: 0.45;
+}
+
+.recharts-legend-item-text,
+.recharts-text {
+  fill: var(--color-muted-foreground) !important;
 }

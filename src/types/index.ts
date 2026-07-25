@@ -116,7 +116,18 @@ export interface Expense {
   /** @deprecated → contractorIds */
   contractorId?: string | null;
   comment: string;
-  receiptPhoto: string | null;
+  /**
+   * Вложения (фото чеков и т.п.), data URL.
+   * @deprecated receiptPhoto — старое одно фото, мигрируется в attachments
+   */
+  attachments: string[];
+  /** @deprecated → attachments */
+  receiptPhoto?: string | null;
+  /**
+   * Ручное разнесение суммы по позициям сметы: itemId → сумма.
+   * Если задано и покрывает позиции — вместо пропорционального деления по плану.
+   */
+  estimateShares?: Record<string, number>;
   createdAt: string;
 }
 

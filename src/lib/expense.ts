@@ -39,6 +39,45 @@ export function getExpenseEstimateIds(
   return asIds(e.estimateItemIds, e.estimateItemId);
 }
 
+/** Фото/вложения расхода (миграция с receiptPhoto) */
+export function getExpenseAttachments(
+  e: Pick<Expense, 'attachments' | 'receiptPhoto'>,
+): string[] {
+  if (Array.isArray(e.attachments) && e.attachments.length > 0) {
+    return e.attachments.filter(Boolean);
+  }
+  if (e.receiptPhoto) return [e.receiptPhoto];
+  return [];
+}
+
+/**
+ * Ручные доли по позициям, если заданы и сумма сходится (±0.02).
+ * Иначе null → пропорционально плану.
+ */
+export function getManualEstimateShares(
+  e: Pick<Expense, 'estimateShares' | 'estimateItemIds' | 'estimateItemId' | 'amount'>,
+): Record<string, number> | null {
+  const ids = getExpenseEstimateIds(e);
+  if (ids.length === 0 || !e.estimateShares) return null;
+  const shares = e.estimateShares;
+  const values = ids.map((id) => Number(shares[id]) || 0);
+  if (values.every((v) => v <= 0) && ids.length > 1) return null;
+  // Все id должны иметь явную долю (допускаем 0 только если остальные покрывают)
+  const hasAny = values.some((v) => v > 0);
+  if (!hasAny) return null;
+  const sum = values.reduce((a, b) => a + b, 0);
+  const amount = Number(e.amount) || 0;
+  if (amount > 0 && Math.abs(sum - amount) > 0.05) {
+    // Неполная/кривая ручная разбивка — не применяем
+    return null;
+  }
+  const result: Record<string, number> = {};
+  for (const id of ids) {
+    result[id] = Math.round((Number(shares[id]) || 0) * 100) / 100;
+  }
+  return result;
+}
+
 /** Нормализация разбивки оплаты (поддержка старого paymentMethod) */
 export function getPaymentParts(
   e: Pick<Expense, 'paymentParts' | 'paymentMethod' | 'amount'>,
@@ -156,16 +195,48 @@ export function allocateExpenseByPlan(
   return result;
 }
 
-/** Доля суммы расхода на позицию сметы (пропорционально плану) */
+/**
+ * Доля суммы расхода на позицию сметы.
+ * Приоритет: ручные estimateShares → пропорционально плану.
+ */
 export function expenseEstimateShare(
-  e: Pick<Expense, 'estimateItemIds' | 'estimateItemId' | 'amount'>,
+  e: Pick<
+    Expense,
+    | 'estimateItemIds'
+    | 'estimateItemId'
+    | 'amount'
+    | 'estimateShares'
+  >,
   itemId: string,
   planByItemId: Record<string, number>,
 ): number {
   const ids = getExpenseEstimateIds(e);
   if (!ids.includes(itemId) || ids.length === 0) return 0;
+  const manual = getManualEstimateShares(e);
+  if (manual) return manual[itemId] ?? 0;
   const alloc = allocateExpenseByPlan(e.amount, ids, planByItemId);
   return alloc[itemId] ?? 0;
+}
+
+/** Равномерно разложить amount по itemIds (для UI «поровну») */
+export function equalShares(
+  amount: number,
+  itemIds: string[],
+): Record<string, number> {
+  if (itemIds.length === 0) return {};
+  if (itemIds.length === 1) return { [itemIds[0]]: amount };
+  const result: Record<string, number> = {};
+  let allocated = 0;
+  const each = Math.round((amount / itemIds.length) * 100) / 100;
+  for (let i = 0; i < itemIds.length; i++) {
+    if (i === itemIds.length - 1) {
+      result[itemIds[i]] = Math.round((amount - allocated) * 100) / 100;
+    } else {
+      result[itemIds[i]] = each;
+      allocated += each;
+    }
+  }
+  return result;
 }
 
 export function normalizeExpense(e: Expense): Expense {
@@ -179,6 +250,23 @@ export function normalizeExpense(e: Expense): Expense {
     paymentParts.length > 0
       ? paymentPartsTotal(paymentParts)
       : Number(e.amount) || 0;
+  const attachments = getExpenseAttachments(e);
+
+  let estimateShares: Record<string, number> | undefined;
+  if (
+    e.estimateShares &&
+    typeof e.estimateShares === 'object' &&
+    Object.keys(e.estimateShares).length > 0
+  ) {
+    const cleaned: Record<string, number> = {};
+    for (const id of estimateItemIds) {
+      if (e.estimateShares[id] != null) {
+        cleaned[id] =
+          Math.round((Number(e.estimateShares[id]) || 0) * 100) / 100;
+      }
+    }
+    if (Object.keys(cleaned).length > 0) estimateShares = cleaned;
+  }
 
   return {
     ...e,
@@ -195,6 +283,9 @@ export function normalizeExpense(e: Expense): Expense {
     contractorId: contractorIds[0] ?? null,
     estimateItemIds,
     estimateItemId: estimateItemIds[0] ?? null,
+    attachments,
+    receiptPhoto: attachments[0] ?? null,
+    estimateShares,
   };
 }
 
