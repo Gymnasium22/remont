@@ -135,6 +135,37 @@ export interface AppSettings {
   theme: ThemeMode;
 }
 
+/** Статус позиции в списке покупок */
+export type WishlistStatus = 'planned' | 'ordered' | 'bought';
+
+/** Приоритет покупки */
+export type WishlistPriority = 'low' | 'normal' | 'high';
+
+/**
+ * Позиция «что планируем купить» — название + кликабельная ссылка.
+ * Не путать с Expense (уже оплаченный расход).
+ */
+export interface WishlistItem {
+  id: string;
+  /** Наименование товара / услуги */
+  name: string;
+  /** Ссылка на товар (магазин, маркетплейс, объявление) */
+  url: string;
+  /** Магазин / площадка (вручную или из домена URL) */
+  store: string;
+  /** Ожидаемая цена за единицу, Br (0 = не указана) */
+  price: number;
+  quantity: number;
+  unit: string;
+  zoneIds: string[];
+  categoryId: string | null;
+  priority: WishlistPriority;
+  status: WishlistStatus;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppData {
   version: 1;
   project: Project;
@@ -144,8 +175,22 @@ export interface AppData {
   contractors: Contractor[];
   estimateItems: EstimateItem[];
   expenses: Expense[];
+  /** Список покупок со ссылками (вишлист) */
+  wishlistItems: WishlistItem[];
   settings: AppSettings;
 }
+
+export const WISHLIST_STATUS_LABELS: Record<WishlistStatus, string> = {
+  planned: 'Планируем',
+  ordered: 'Заказано',
+  bought: 'Куплено',
+};
+
+export const WISHLIST_PRIORITY_LABELS: Record<WishlistPriority, string> = {
+  low: 'Низкий',
+  normal: 'Обычный',
+  high: 'Срочно',
+};
 
 export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   cash: 'Наличные',

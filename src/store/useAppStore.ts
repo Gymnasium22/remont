@@ -8,6 +8,7 @@ import type {
   Project,
   Stage,
   ThemeMode,
+  WishlistItem,
   Zone,
 } from '../types';
 import { createDefaultData } from '../lib/defaults';
@@ -20,6 +21,7 @@ import {
 } from '../lib/expense';
 import { clearAppData, loadAppData, saveAppData } from '../lib/idb';
 import { todayISO, uid } from '../lib/utils';
+import { normalizeWishlistItem } from '../lib/wishlist';
 import { getItemZoneIds, itemPlan } from '../lib/zones';
 
 interface AppState extends AppData {
@@ -62,6 +64,12 @@ interface AppState extends AppData {
   updateExpense: (id: string, patch: Partial<Expense>) => void;
   removeExpense: (id: string) => void;
 
+  addWishlistItem: (
+    item: Omit<WishlistItem, 'id' | 'createdAt' | 'updatedAt'>,
+  ) => void;
+  updateWishlistItem: (id: string, patch: Partial<WishlistItem>) => void;
+  removeWishlistItem: (id: string) => void;
+
   setTheme: (theme: ThemeMode) => void;
   exportData: () => AppData;
   importData: (data: AppData) => Promise<void>;
@@ -80,6 +88,7 @@ function withPersist(get: () => AppState) {
       contractors: s.contractors,
       estimateItems: s.estimateItems,
       expenses: s.expenses,
+      wishlistItems: s.wishlistItems ?? [],
       settings: s.settings,
     };
     await saveAppData(data);
@@ -385,6 +394,40 @@ export const useAppStore = create<AppState>((set, get) => {
       apply({ expenses: get().expenses.filter((e) => e.id !== id) });
     },
 
+    addWishlistItem: (item) => {
+      const now = new Date().toISOString();
+      apply({
+        wishlistItems: [
+          ...(get().wishlistItems ?? []),
+          normalizeWishlistItem({
+            ...item,
+            id: uid(),
+            createdAt: now,
+            updatedAt: now,
+          }),
+        ],
+      });
+    },
+    updateWishlistItem: (id, patch) => {
+      apply({
+        wishlistItems: (get().wishlistItems ?? []).map((w) => {
+          if (w.id !== id) return w;
+          return normalizeWishlistItem({
+            ...w,
+            ...patch,
+            id: w.id,
+            createdAt: w.createdAt,
+            updatedAt: new Date().toISOString(),
+          });
+        }),
+      });
+    },
+    removeWishlistItem: (id) => {
+      apply({
+        wishlistItems: (get().wishlistItems ?? []).filter((w) => w.id !== id),
+      });
+    },
+
     setTheme: (theme) => {
       apply({ settings: { ...get().settings, theme } });
     },
@@ -400,6 +443,7 @@ export const useAppStore = create<AppState>((set, get) => {
         contractors: s.contractors,
         estimateItems: s.estimateItems,
         expenses: s.expenses,
+        wishlistItems: s.wishlistItems ?? [],
         settings: s.settings,
       };
     },
@@ -422,6 +466,9 @@ export const useAppStore = create<AppState>((set, get) => {
         };
       });
       const expenses = (data.expenses ?? []).map((e) => normalizeExpense(e));
+      const wishlistItems = (data.wishlistItems ?? []).map((w) =>
+        normalizeWishlistItem(w),
+      );
       set({
         project: data.project,
         zones: data.zones ?? [],
@@ -430,6 +477,7 @@ export const useAppStore = create<AppState>((set, get) => {
         contractors: data.contractors ?? [],
         estimateItems,
         expenses,
+        wishlistItems,
         settings: data.settings ?? { theme: 'system' },
       });
       await persist();

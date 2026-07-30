@@ -53,6 +53,7 @@ export function createDefaultData(): AppData {
     contractors: [],
     estimateItems: [],
     expenses: [],
+    wishlistItems: [],
     settings: { theme: 'system' },
   };
 }

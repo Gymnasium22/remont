@@ -8,6 +8,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { EstimatePage } from './pages/EstimatePage';
 import { ExpensesPage } from './pages/ExpensesPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { WishlistPage } from './pages/WishlistPage';
 
 /** HashRouter для GitHub Pages / Telegram; BrowserRouter если задан base с историей */
 const Router =
@@ -39,6 +40,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="estimate" element={<EstimatePage />} />
           <Route path="expenses" element={<ExpensesPage />} />
+          <Route path="wishlist" element={<WishlistPage />} />
           <Route path="contractors" element={<ContractorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

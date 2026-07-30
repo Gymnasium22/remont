@@ -4,6 +4,7 @@ import {
   Home,
   Receipt,
   Settings,
+  ShoppingBag,
   Users,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -15,8 +16,9 @@ const nav = [
   { to: '/', label: 'Дашборд', icon: Home, end: true },
   { to: '/estimate', label: 'Смета', icon: ClipboardList },
   { to: '/expenses', label: 'Расходы', icon: Receipt },
+  { to: '/wishlist', label: 'Купить', icon: ShoppingBag },
   { to: '/contractors', label: 'Люди', icon: Users },
-  { to: '/settings', label: 'Настройки', icon: Settings },
+  { to: '/settings', label: 'Ещё', icon: Settings },
 ];
 
 export function AppShell() {

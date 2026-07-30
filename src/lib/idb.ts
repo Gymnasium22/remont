@@ -1,8 +1,9 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { AppData, EstimateItem } from '../types';
+import type { AppData, EstimateItem, WishlistItem } from '../types';
 import { createDefaultData } from './defaults';
 import { normalizeExpense } from './expense';
 import { getItemZoneIds } from './zones';
+import { normalizeWishlistItem } from './wishlist';
 
 const DB_NAME = 'moy-remont';
 const STORE = 'app';
@@ -40,7 +41,10 @@ function normalizeData(raw: AppData): AppData {
     } as EstimateItem;
   });
   const expenses = (raw.expenses ?? []).map((e) => normalizeExpense(e));
-  return { ...raw, estimateItems, expenses };
+  const wishlistItems = (raw.wishlistItems ?? []).map((w) =>
+    normalizeWishlistItem(w as WishlistItem),
+  );
+  return { ...raw, estimateItems, expenses, wishlistItems };
 }
 
 export async function loadAppData(): Promise<AppData> {
