@@ -63,12 +63,11 @@ import {
 } from '../lib/expense';
 import { compressImage, cn, formatDate } from '../lib/utils';
 import {
-  expenseCommentFromWishlist,
+  expenseCommentFromWishlists,
   normalizeUrl,
   wishlistLineTotal,
 } from '../lib/wishlist';
 import {
-  getItemZoneIds,
   itemExpectedPaid,
   itemPlan,
   itemRemaining,
@@ -79,130 +78,22 @@ import {
   todayISO,
   useAppStore,
 } from '../store/useAppStore';
-import type { Expense, PaymentMethod, PaymentPart } from '../types';
+import type { Expense, PaymentMethod } from '../types';
 import { PAYMENT_LABELS } from '../types';
+import {
+  applyRemainingToCash,
+  autoCommentFromItems,
+  deriveFromEstimateItems,
+  emptyExpenseForm,
+  formToPaymentParts,
+  partsToFormFields,
+  type ExpenseFormState as FormState,
+  type ExpenseKind,
+} from './expenses/formUtils';
 
 const METHODS = Object.keys(PAYMENT_LABELS) as PaymentMethod[];
 
-/** estimate — оплата по смете; shop — покупки вне сметы (магазин, доставка) */
-type ExpenseKind = 'estimate' | 'shop';
-
-type FormState = {
-  kind: ExpenseKind;
-  date: string;
-  /** Суммы по способам оплаты, Br (строки для инпутов) */
-  payCash: string;
-  payCard: string;
-  payTransfer: string;
-  estimateItemIds: string[];
-  zoneIds: string[];
-  categoryIds: string[];
-  stageIds: string[];
-  contractorIds: string[];
-  /** Связь с «К покупке» */
-  wishlistItemIds: string[];
-  comment: string;
-  /** Несколько фото чеков (data URL) */
-  attachments: string[];
-  /**
-   * Ручное разнесение: itemId → сумма (строка для инпута).
-   * Пустые/не заданы → пропорционально плану.
-   */
-  shareMode: 'auto' | 'manual';
-  shares: Record<string, string>;
-};
-
-function emptyForm(): FormState {
-  return {
-    kind: 'estimate',
-    date: todayISO(),
-    payCash: '',
-    payCard: '',
-    payTransfer: '',
-    estimateItemIds: [],
-    zoneIds: [],
-    categoryIds: [],
-    stageIds: [],
-    contractorIds: [],
-    wishlistItemIds: [],
-    comment: '',
-    attachments: [],
-    shareMode: 'auto',
-    shares: {},
-  };
-}
-
-/** Зоны / категории / этапы строго из выбранных позиций сметы (без дефолтов) */
-function deriveFromEstimateItems(
-  itemIds: string[],
-  estimateItems: {
-    id: string;
-    name: string;
-    zoneIds?: string[];
-    zoneId?: string;
-    categoryId: string;
-    stageId: string;
-  }[],
-) {
-  const zoneIds = new Set<string>();
-  const categoryIds = new Set<string>();
-  const stageIds = new Set<string>();
-
-  for (const id of itemIds) {
-    const item = estimateItems.find((i) => i.id === id);
-    if (!item) continue;
-    for (const z of getItemZoneIds({
-      zoneIds: item.zoneIds ?? [],
-      zoneId: item.zoneId,
-    })) {
-      zoneIds.add(z);
-    }
-    if (item.categoryId) categoryIds.add(item.categoryId);
-    if (item.stageId) stageIds.add(item.stageId);
-  }
-
-  return {
-    zoneIds: [...zoneIds],
-    categoryIds: [...categoryIds],
-    stageIds: [...stageIds],
-  };
-}
-
-function autoCommentFromItems(
-  itemIds: string[],
-  estimateItems: { id: string; name: string }[],
-): string {
-  return itemIds
-    .map((id) => estimateItems.find((i) => i.id === id)?.name)
-    .filter(Boolean)
-    .join(', ');
-}
-
-function formToPaymentParts(form: FormState): PaymentPart[] {
-  const parts: PaymentPart[] = [];
-  const cash = Number(form.payCash) || 0;
-  const card = Number(form.payCard) || 0;
-  const transfer = Number(form.payTransfer) || 0;
-  if (cash > 0) parts.push({ method: 'cash', amount: cash });
-  if (card > 0) parts.push({ method: 'card', amount: card });
-  if (transfer > 0) parts.push({ method: 'transfer', amount: transfer });
-  return parts;
-}
-
-function partsToFormFields(parts: PaymentPart[]) {
-  const by = (m: PaymentMethod) =>
-    parts
-      .filter((p) => p.method === m)
-      .reduce((s, p) => s + p.amount, 0);
-  const cash = by('cash');
-  const card = by('card');
-  const transfer = by('transfer');
-  return {
-    payCash: cash > 0 ? String(cash) : '',
-    payCard: card > 0 ? String(card) : '',
-    payTransfer: transfer > 0 ? String(transfer) : '',
-  };
-}
+const emptyForm = emptyExpenseForm;
 
 export function ExpensesPage() {
   const zones = useAppStore((s) => s.zones);
@@ -259,29 +150,36 @@ export function ExpensesPage() {
     setOpen(true);
   };
 
-  /** Prefill «покупки» из списка «К покупке» */
-  const openFromWishlist = (wishlistId: string) => {
-    const item = wishlistItems.find((w) => w.id === wishlistId);
-    if (!item) {
-      toast.error('Позиция из списка покупок не найдена');
+  /** Prefill «покупки» из списка «К покупке» (одна или несколько) */
+  const openFromWishlist = (wishlistIds: string[]) => {
+    const items = wishlistIds
+      .map((id) => wishlistItems.find((w) => w.id === id))
+      .filter(Boolean) as typeof wishlistItems;
+    if (items.length === 0) {
+      toast.error('Позиции из списка покупок не найдены');
       openCreate('shop');
       return;
     }
     const mat = categories.find((c) => /материал/i.test(c.name));
     const finish =
       stages.find((s) => /чистов/i.test(s.name)) ?? stages[0];
-    const line = wishlistLineTotal(item);
-    const zoneIds =
-      item.zoneIds.length > 0
-        ? item.zoneIds
-        : zones[0]
-          ? [zones[0].id]
-          : [];
-    const categoryIds = item.categoryId
-      ? [item.categoryId]
-      : mat
-        ? [mat.id]
-        : [];
+    const line = items.reduce((s, it) => s + wishlistLineTotal(it), 0);
+    const zoneIds = [
+      ...new Set(
+        items.flatMap((it) =>
+          it.zoneIds.length > 0 ? it.zoneIds : [],
+        ),
+      ),
+    ];
+    if (zoneIds.length === 0 && zones[0]) zoneIds.push(zones[0].id);
+    const categoryIds = [
+      ...new Set(
+        items
+          .map((it) => it.categoryId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    if (categoryIds.length === 0 && mat) categoryIds.push(mat.id);
     setEditing(null);
     setForm({
       ...emptyForm(),
@@ -289,17 +187,25 @@ export function ExpensesPage() {
       zoneIds,
       categoryIds,
       stageIds: finish ? [finish.id] : [],
-      wishlistItemIds: [item.id],
-      comment: expenseCommentFromWishlist(item),
+      wishlistItemIds: items.map((it) => it.id),
+      comment: expenseCommentFromWishlists(items),
       payCash: line > 0 ? String(Math.round(line * 100) / 100) : '',
       payCard: '',
       payTransfer: '',
     });
     setStep(0);
     setOpen(true);
-    toast.message('Из списка покупок', {
-      description: item.name,
-    });
+    toast.message(
+      items.length === 1
+        ? 'Из списка покупок'
+        : `Чек на ${items.length} позиций`,
+      {
+        description:
+          items.length === 1
+            ? items[0].name
+            : items.map((i) => i.name).join(', '),
+      },
+    );
   };
 
   useEffect(() => {
@@ -313,9 +219,13 @@ export function ExpensesPage() {
       return;
     }
     if (searchParams.get('new') === '1') {
-      const wishlistId = searchParams.get('wishlist');
-      if (wishlistId) {
-        openFromWishlist(wishlistId);
+      const wishlistParam = searchParams.get('wishlist');
+      if (wishlistParam) {
+        const ids = wishlistParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        openFromWishlist(ids);
       } else {
         const kind =
           searchParams.get('kind') === 'shop' ? 'shop' : 'estimate';
@@ -402,18 +312,6 @@ export function ExpensesPage() {
     (s, r) => s + r.remain,
     0,
   );
-
-  const applyRemainingToCash = (remain: number) => {
-    if (remain <= 0) {
-      return { payCash: '', payCard: '', payTransfer: '' };
-    }
-    // Подставляем остаток в наличные (можно разбить вручную)
-    return {
-      payCash: String(Math.round(remain * 100) / 100),
-      payCard: '',
-      payTransfer: '',
-    };
-  };
 
   const openEdit = (e: Expense) => {
     setEditing(e);

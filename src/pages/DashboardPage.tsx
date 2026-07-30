@@ -370,6 +370,10 @@ export function DashboardPage() {
         <QuickLink to="/estimate" label="Добавить в смету" />
         <QuickLink to="/expenses?new=1" label="Добавить расход" />
         <QuickLink to="/expenses?new=1&kind=shop" label="Покупка в магазине" />
+        <QuickLink to="/wishlist" label="К покупке" />
+        <QuickLink to="/materials" label="Склад" />
+        <QuickLink to="/photos" label="Фото зон" />
+        <QuickLink to="/calc" label="Что если…" />
         <QuickLink to="/settings" label="Проект и данные" />
       </div>
 

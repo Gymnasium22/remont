@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
   ArrowDownWideNarrow,
-  Check,
   ClipboardList,
   Copy,
   Filter,
@@ -14,6 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/PageHeader';
+import { ZoneChips } from './estimate/ZoneChips';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -122,44 +122,6 @@ function extrasFromForm(extras: ExtraForm[]): EstimateExtra[] {
       unit: e.unit || 'шт',
       unitPrice: Number(e.unitPrice) || 0,
     }));
-}
-
-function ZoneChips({
-  zones,
-  selected,
-  onToggle,
-}: {
-  zones: { id: string; name: string; color: string }[];
-  selected: string[];
-  onToggle: (id: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {zones.map((z) => {
-        const on = selected.includes(z.id);
-        return (
-          <button
-            key={z.id}
-            type="button"
-            onClick={() => onToggle(z.id)}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-medium transition',
-              on
-                ? 'border-primary bg-primary/10 text-primary'
-                : 'border-border bg-card text-muted-foreground hover:bg-muted',
-            )}
-          >
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{ background: z.color }}
-            />
-            {z.name}
-            {on && <Check className="h-3.5 w-3.5" />}
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 export function EstimatePage() {

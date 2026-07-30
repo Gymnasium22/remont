@@ -1,6 +1,10 @@
 export type PaymentMethod = 'cash' | 'card' | 'transfer';
 export type ThemeMode = 'light' | 'dark' | 'system';
 
+/** Текущая версия схемы AppData (IndexedDB / export JSON) */
+export const APP_DATA_VERSION = 2 as const;
+export type AppDataVersion = 1 | 2;
+
 export interface Zone {
   id: string;
   name: string;
@@ -143,20 +147,34 @@ export type WishlistStatus = 'planned' | 'ordered' | 'bought';
 /** Приоритет покупки */
 export type WishlistPriority = 'low' | 'normal' | 'high';
 
+/** Вариант магазина / ссылки для сравнения цен */
+export interface WishlistOffer {
+  id: string;
+  url: string;
+  store: string;
+  /** Цена за единицу, Br */
+  unitPrice: number;
+  note: string;
+}
+
 /**
- * Позиция «что планируем купить» — название + кликабельная ссылка.
+ * Позиция «что планируем купить» — название + кликабельные ссылки.
  * Не путать с Expense (уже оплаченный расход).
  */
 export interface WishlistItem {
   id: string;
   /** Наименование товара / услуги */
   name: string;
-  /** Ссылка на товар (магазин, маркетплейс, объявление) */
+  /**
+   * Основная ссылка (для совместимости и быстрого открытия).
+   * Синхронизируется с лучшим / первым offer.
+   */
   url: string;
-  /** Магазин / площадка (вручную или из домена URL) */
   store: string;
-  /** Ожидаемая цена за единицу, Br (0 = не указана) */
+  /** Ожидаемая цена за единицу (лучшая из offers или ручная), Br */
   price: number;
+  /** Альтернативные магазины для сравнения */
+  offers: WishlistOffer[];
   quantity: number;
   unit: string;
   zoneIds: string[];
@@ -170,8 +188,37 @@ export interface WishlistItem {
   updatedAt: string;
 }
 
+/** Остатки материалов на объекте */
+export interface MaterialStock {
+  id: string;
+  name: string;
+  unit: string;
+  /** Куплено / поступило */
+  qtyIn: number;
+  /** Израсходовано */
+  qtyOut: number;
+  zoneIds: string[];
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Фото зоны: до / процесс / после */
+export type ZonePhotoKind = 'before' | 'process' | 'after';
+
+export interface ZonePhoto {
+  id: string;
+  zoneId: string;
+  kind: ZonePhotoKind;
+  /** data URL (сжатое) */
+  dataUrl: string;
+  caption: string;
+  takenAt: string;
+  createdAt: string;
+}
+
 export interface AppData {
-  version: 1;
+  version: typeof APP_DATA_VERSION;
   project: Project;
   zones: Zone[];
   categories: Category[];
@@ -181,8 +228,21 @@ export interface AppData {
   expenses: Expense[];
   /** Список покупок со ссылками (вишлист) */
   wishlistItems: WishlistItem[];
+  /** Склад материалов */
+  materials: MaterialStock[];
+  /** Фото по зонам */
+  zonePhotos: ZonePhoto[];
   settings: AppSettings;
 }
+
+/** Сырые данные v1 (импорт / IDB до миграции) */
+export type AppDataV1 = Omit<
+  AppData,
+  'version' | 'materials' | 'zonePhotos' | 'wishlistItems'
+> & {
+  version: 1;
+  wishlistItems?: WishlistItem[];
+};
 
 export const WISHLIST_STATUS_LABELS: Record<WishlistStatus, string> = {
   planned: 'Планируем',
@@ -194,6 +254,12 @@ export const WISHLIST_PRIORITY_LABELS: Record<WishlistPriority, string> = {
   low: 'Низкий',
   normal: 'Обычный',
   high: 'Срочно',
+};
+
+export const ZONE_PHOTO_KIND_LABELS: Record<ZonePhotoKind, string> = {
+  before: 'До',
+  process: 'Процесс',
+  after: 'После',
 };
 
 export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
@@ -211,6 +277,9 @@ export const UNITS = [
   'л',
   'уп',
   'компл',
+  'мешок',
+  'рулон',
+  'лист',
   'услуга',
   'работа',
 ] as const;

@@ -8,6 +8,25 @@ const base = process.env.VITE_BASE || './';
 
 export default defineConfig({
   base,
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('recharts') || id.includes('d3-') || id.includes('victory')) {
+              return 'charts';
+            }
+            if (id.includes('react-dom') || id.includes('react-router')) {
+              return 'react-vendor';
+            }
+            if (id.includes('@radix-ui')) {
+              return 'radix';
+            }
+          }
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

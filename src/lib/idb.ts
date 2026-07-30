@@ -1,9 +1,7 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { AppData, EstimateItem, WishlistItem } from '../types';
+import type { AppData } from '../types';
 import { createDefaultData } from './defaults';
-import { normalizeExpense } from './expense';
-import { getItemZoneIds } from './zones';
-import { normalizeWishlistItem } from './wishlist';
+import { migrateToLatest } from './migrate';
 
 const DB_NAME = 'moy-remont';
 const STORE = 'app';
@@ -25,34 +23,16 @@ function getDb() {
   return dbPromise;
 }
 
-function normalizeData(raw: AppData): AppData {
-  const estimateItems = (raw.estimateItems ?? []).map((item) => {
-    const zoneIds = getItemZoneIds(item as EstimateItem);
-    const rawItem = item as EstimateItem;
-    return {
-      ...rawItem,
-      zoneIds,
-      zoneId: zoneIds[0],
-      selfDonePercent: Math.min(
-        100,
-        Math.max(0, Number(rawItem.selfDonePercent) || 0),
-      ),
-      extras: Array.isArray(rawItem.extras) ? rawItem.extras : [],
-    } as EstimateItem;
-  });
-  const expenses = (raw.expenses ?? []).map((e) => normalizeExpense(e));
-  const wishlistItems = (raw.wishlistItems ?? []).map((w) =>
-    normalizeWishlistItem(w as WishlistItem),
-  );
-  return { ...raw, estimateItems, expenses, wishlistItems };
-}
-
 export async function loadAppData(): Promise<AppData> {
   try {
     const db = await getDb();
     const data = await db.get(STORE, KEY);
-    if (data && typeof data === 'object' && data.version === 1) {
-      return normalizeData(data as AppData);
+    if (data && typeof data === 'object') {
+      try {
+        return migrateToLatest(data);
+      } catch (e) {
+        console.warn('IDB migrate failed', e);
+      }
     }
   } catch (e) {
     console.warn('IDB load failed', e);

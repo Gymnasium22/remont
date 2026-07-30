@@ -1,4 +1,5 @@
 import type { AppData, Category, Stage, Zone } from '../types';
+import { APP_DATA_VERSION } from '../types';
 import { uid } from './utils';
 
 export const DEFAULT_ZONES: Omit<Zone, 'id'>[] = [
@@ -40,7 +41,7 @@ export function createDefaultData(): AppData {
   const stages: Stage[] = DEFAULT_STAGES.map((s) => ({ ...s, id: uid() }));
 
   return {
-    version: 1,
+    version: APP_DATA_VERSION,
     project: {
       name: 'Мой ремонт',
       startDate: new Date().toISOString().slice(0, 10),
@@ -54,6 +55,8 @@ export function createDefaultData(): AppData {
     estimateItems: [],
     expenses: [],
     wishlistItems: [],
+    materials: [],
+    zonePhotos: [],
     settings: { theme: 'system' },
   };
 }

@@ -5,12 +5,16 @@ import type {
   Contractor,
   EstimateItem,
   Expense,
+  MaterialStock,
   Project,
   Stage,
   ThemeMode,
   WishlistItem,
   Zone,
+  ZonePhoto,
+  ZonePhotoKind,
 } from '../types';
+import { APP_DATA_VERSION } from '../types';
 import { createDefaultData } from '../lib/defaults';
 import {
   expenseEstimateShare,
@@ -21,6 +25,7 @@ import {
   normalizeExpense,
 } from '../lib/expense';
 import { clearAppData, loadAppData, saveAppData } from '../lib/idb';
+import { migrateToLatest } from '../lib/migrate';
 import { todayISO, uid } from '../lib/utils';
 import {
   getWishlistExpenseIds,
@@ -74,28 +79,44 @@ interface AppState extends AppData {
   updateWishlistItem: (id: string, patch: Partial<WishlistItem>) => void;
   removeWishlistItem: (id: string) => void;
 
+  addMaterial: (
+    m: Omit<MaterialStock, 'id' | 'createdAt' | 'updatedAt'>,
+  ) => void;
+  updateMaterial: (id: string, patch: Partial<MaterialStock>) => void;
+  removeMaterial: (id: string) => void;
+
+  addZonePhoto: (
+    p: Omit<ZonePhoto, 'id' | 'createdAt'> & { kind?: ZonePhotoKind },
+  ) => void;
+  updateZonePhoto: (id: string, patch: Partial<ZonePhoto>) => void;
+  removeZonePhoto: (id: string) => void;
+
   setTheme: (theme: ThemeMode) => void;
   exportData: () => AppData;
-  importData: (data: AppData) => Promise<void>;
+  importData: (data: unknown) => Promise<void>;
   resetAll: () => Promise<void>;
+}
+
+function snapshot(s: AppState): AppData {
+  return {
+    version: APP_DATA_VERSION,
+    project: s.project,
+    zones: s.zones,
+    categories: s.categories,
+    stages: s.stages,
+    contractors: s.contractors,
+    estimateItems: s.estimateItems,
+    expenses: s.expenses,
+    wishlistItems: s.wishlistItems ?? [],
+    materials: s.materials ?? [],
+    zonePhotos: s.zonePhotos ?? [],
+    settings: s.settings,
+  };
 }
 
 function withPersist(get: () => AppState) {
   return async () => {
-    const s = get();
-    const data: AppData = {
-      version: 1,
-      project: s.project,
-      zones: s.zones,
-      categories: s.categories,
-      stages: s.stages,
-      contractors: s.contractors,
-      estimateItems: s.estimateItems,
-      expenses: s.expenses,
-      wishlistItems: s.wishlistItems ?? [],
-      settings: s.settings,
-    };
-    await saveAppData(data);
+    await saveAppData(snapshot(get()));
   };
 }
 
@@ -158,6 +179,11 @@ export const useAppStore = create<AppState>((set, get) => {
           const zoneIds = getExpenseZoneIds(e).filter((z) => z !== id);
           return normalizeExpense({ ...e, zoneIds, zoneId: zoneIds[0] });
         }),
+        materials: (s.materials ?? []).map((m) => ({
+          ...m,
+          zoneIds: (m.zoneIds ?? []).filter((z) => z !== id),
+        })),
+        zonePhotos: (s.zonePhotos ?? []).filter((p) => p.zoneId !== id),
       });
     },
 
@@ -213,10 +239,21 @@ export const useAppStore = create<AppState>((set, get) => {
         ...(wasActive ? [newId] : []),
       ];
 
+      const materials = (s.materials ?? []).map((m) => {
+        if (!m.zoneIds.some((id) => idSet.has(id))) return m;
+        const rest = m.zoneIds.filter((id) => !idSet.has(id));
+        return { ...m, zoneIds: [...new Set([newId, ...rest])] };
+      });
+      const zonePhotos = (s.zonePhotos ?? []).map((p) =>
+        idSet.has(p.zoneId) ? { ...p, zoneId: newId } : p,
+      );
+
       apply({
         zones: [...s.zones.filter((z) => !idSet.has(z.id)), newZone],
         estimateItems,
         expenses,
+        materials,
+        zonePhotos,
         project: { ...s.project, activeZones },
       });
 
@@ -492,57 +529,93 @@ export const useAppStore = create<AppState>((set, get) => {
       });
     },
 
+    addMaterial: (m) => {
+      const now = new Date().toISOString();
+      apply({
+        materials: [
+          ...(get().materials ?? []),
+          {
+            id: uid(),
+            name: m.name.trim() || 'Материал',
+            unit: m.unit || 'шт',
+            qtyIn: Math.max(0, Number(m.qtyIn) || 0),
+            qtyOut: Math.max(0, Number(m.qtyOut) || 0),
+            zoneIds: m.zoneIds ?? [],
+            note: m.note ?? '',
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      });
+    },
+    updateMaterial: (id, patch) => {
+      apply({
+        materials: (get().materials ?? []).map((m) =>
+          m.id === id
+            ? {
+                ...m,
+                ...patch,
+                qtyIn:
+                  patch.qtyIn != null
+                    ? Math.max(0, Number(patch.qtyIn) || 0)
+                    : m.qtyIn,
+                qtyOut:
+                  patch.qtyOut != null
+                    ? Math.max(0, Number(patch.qtyOut) || 0)
+                    : m.qtyOut,
+                updatedAt: new Date().toISOString(),
+              }
+            : m,
+        ),
+      });
+    },
+    removeMaterial: (id) => {
+      apply({
+        materials: (get().materials ?? []).filter((m) => m.id !== id),
+      });
+    },
+
+    addZonePhoto: (p) => {
+      const now = new Date().toISOString();
+      apply({
+        zonePhotos: [
+          ...(get().zonePhotos ?? []),
+          {
+            id: uid(),
+            zoneId: p.zoneId,
+            kind: p.kind ?? 'process',
+            dataUrl: p.dataUrl,
+            caption: p.caption ?? '',
+            takenAt: p.takenAt || todayISO(),
+            createdAt: now,
+          },
+        ],
+      });
+    },
+    updateZonePhoto: (id, patch) => {
+      apply({
+        zonePhotos: (get().zonePhotos ?? []).map((p) =>
+          p.id === id ? { ...p, ...patch } : p,
+        ),
+      });
+    },
+    removeZonePhoto: (id) => {
+      apply({
+        zonePhotos: (get().zonePhotos ?? []).filter((p) => p.id !== id),
+      });
+    },
+
     setTheme: (theme) => {
       apply({ settings: { ...get().settings, theme } });
     },
 
-    exportData: () => {
-      const s = get();
-      return {
-        version: 1 as const,
-        project: s.project,
-        zones: s.zones,
-        categories: s.categories,
-        stages: s.stages,
-        contractors: s.contractors,
-        estimateItems: s.estimateItems,
-        expenses: s.expenses,
-        wishlistItems: s.wishlistItems ?? [],
-        settings: s.settings,
-      };
-    },
+    exportData: () => snapshot(get()),
 
     importData: async (data) => {
-      if (!data || data.version !== 1) {
-        throw new Error('Неверный формат файла');
-      }
-      const estimateItems = (data.estimateItems ?? []).map((item) => {
-        const zoneIds = getItemZoneIds(item);
-        return {
-          ...item,
-          zoneIds,
-          zoneId: zoneIds[0],
-          selfDonePercent: Math.min(
-            100,
-            Math.max(0, Number(item.selfDonePercent) || 0),
-          ),
-          extras: Array.isArray(item.extras) ? item.extras : [],
-        };
-      });
-      const expenses = (data.expenses ?? []).map((e) => normalizeExpense(e));
-      const wishlistItems = (data.wishlistItems ?? []).map((w) =>
-        normalizeWishlistItem(w),
-      );
+      const migrated = migrateToLatest(data);
       set({
-        project: data.project,
-        zones: data.zones ?? [],
-        categories: data.categories ?? [],
-        stages: data.stages ?? [],
-        contractors: data.contractors ?? [],
-        estimateItems,
-        expenses,
-        wishlistItems,
-        settings: data.settings ?? { theme: 'system' },
+        ...migrated,
+        hydrated: true,
       });
       await persist();
     },

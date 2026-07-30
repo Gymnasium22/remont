@@ -18,7 +18,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { downloadJson } from '../lib/utils';
 import { useAppStore } from '../store/useAppStore';
-import type { AppData, ThemeMode } from '../types';
+import type { ThemeMode } from '../types';
 import { cn } from '../lib/utils';
 
 const COLORS = [
@@ -57,7 +57,7 @@ export function SettingsPage() {
   const [newCat, setNewCat] = useState('');
   const [newStage, setNewStage] = useState('');
   const [importOpen, setImportOpen] = useState(false);
-  const [pendingImport, setPendingImport] = useState<AppData | null>(null);
+  const [pendingImport, setPendingImport] = useState<unknown | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -75,9 +75,9 @@ export function SettingsPage() {
     if (!file) return;
     try {
       const text = await file.text();
-      const data = JSON.parse(text) as AppData;
-      if (!data || data.version !== 1) {
-        toast.error('Неверный формат JSON (ожидается version: 1)');
+      const data = JSON.parse(text) as { version?: number };
+      if (!data || (data.version !== 1 && data.version !== 2)) {
+        toast.error('Неверный формат JSON (ожидается version: 1 или 2)');
         return;
       }
       setPendingImport(data);

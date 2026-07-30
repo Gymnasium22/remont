@@ -43,15 +43,19 @@ import { Textarea } from '../components/ui/textarea';
 import { formatBr } from '../lib/currency';
 import { cn, formatDate } from '../lib/utils';
 import {
+  bestOfferPrice,
   expensesForWishlistItem,
+  normalizeOffer,
   normalizeUrl,
   storeFromUrl,
   wishlistLineTotal,
   wishlistPaidTotal,
+  wishlistPriceCompare,
 } from '../lib/wishlist';
 import { useAppStore } from '../store/useAppStore';
 import type {
   WishlistItem,
+  WishlistOffer,
   WishlistPriority,
   WishlistStatus,
 } from '../types';
@@ -60,12 +64,19 @@ import {
   WISHLIST_PRIORITY_LABELS,
   WISHLIST_STATUS_LABELS,
 } from '../types';
+import { uid } from '../lib/utils';
+
+type OfferForm = {
+  id: string;
+  url: string;
+  store: string;
+  unitPrice: string;
+  note: string;
+};
 
 type FormState = {
   name: string;
-  url: string;
-  store: string;
-  price: string;
+  offers: OfferForm[];
   quantity: string;
   unit: string;
   zoneIds: string[];
@@ -75,11 +86,17 @@ type FormState = {
   note: string;
 };
 
-const emptyForm = (): FormState => ({
-  name: '',
+const emptyOffer = (): OfferForm => ({
+  id: uid(),
   url: '',
   store: '',
-  price: '',
+  unitPrice: '',
+  note: '',
+});
+
+const emptyForm = (): FormState => ({
+  name: '',
+  offers: [emptyOffer()],
   quantity: '1',
   unit: 'шт',
   zoneIds: [],
@@ -104,12 +121,32 @@ const STATUS_ORDER: Record<WishlistStatus, number> = {
   bought: 2,
 };
 
+function offerToForm(o: WishlistOffer): OfferForm {
+  return {
+    id: o.id,
+    url: o.url,
+    store: o.store,
+    unitPrice: o.unitPrice > 0 ? String(o.unitPrice) : '',
+    note: o.note ?? '',
+  };
+}
+
 function formFromItem(item: WishlistItem): FormState {
+  const offers =
+    item.offers?.length > 0
+      ? item.offers.map(offerToForm)
+      : [
+          {
+            id: uid(),
+            url: item.url,
+            store: item.store,
+            unitPrice: item.price > 0 ? String(item.price) : '',
+            note: '',
+          },
+        ];
   return {
     name: item.name,
-    url: item.url,
-    store: item.store,
-    price: item.price > 0 ? String(item.price) : '',
+    offers,
     quantity: String(item.quantity || 1),
     unit: item.unit || 'шт',
     zoneIds: [...item.zoneIds],
@@ -121,14 +158,25 @@ function formFromItem(item: WishlistItem): FormState {
 }
 
 function toPayload(form: FormState, expenseIds: string[] = []) {
-  const url = normalizeUrl(form.url);
-  const store =
-    form.store.trim() || (url ? storeFromUrl(url) : '');
+  const offers = form.offers
+    .filter((o) => o.url.trim() || Number(o.unitPrice) > 0)
+    .map((o) =>
+      normalizeOffer({
+        id: o.id,
+        url: o.url,
+        store: o.store,
+        unitPrice: Number(o.unitPrice) || 0,
+        note: o.note,
+      }),
+    );
+  const bestPrice = bestOfferPrice(offers);
+  const primary = offers[0];
   return {
     name: form.name.trim(),
-    url,
-    store,
-    price: Math.max(0, Number(form.price) || 0),
+    url: primary?.url ?? '',
+    store: primary?.store ?? '',
+    price: bestPrice || (primary?.unitPrice ?? 0),
+    offers,
     quantity: Math.max(0.001, Number(form.quantity) || 1),
     unit: form.unit.trim() || 'шт',
     zoneIds: form.zoneIds,
@@ -168,6 +216,7 @@ export function WishlistPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [zoneFilter, setZoneFilter] = useState<string>('all');
   const [sortKey, setSortKey] = useState<SortKey>('priority');
+  const [selected, setSelected] = useState<string[]>([]);
 
   const activeZones = useMemo(() => {
     const active = new Set(project.activeZones);
@@ -257,15 +306,14 @@ export function WishlistPage() {
       toast.error('Укажите наименование');
       return;
     }
-    if (!form.url.trim()) {
-      toast.error('Укажите ссылку на товар');
+    const hasOffer = form.offers.some(
+      (o) => o.url.trim() || Number(o.unitPrice) > 0,
+    );
+    if (!hasOffer) {
+      toast.error('Добавьте хотя бы ссылку или цену');
       return;
     }
     const payload = toPayload(form, editing?.expenseIds ?? []);
-    if (!payload.url) {
-      toast.error('Некорректная ссылка');
-      return;
-    }
     if (editing) {
       update(editing.id, payload);
       toast.success('Позиция обновлена');
@@ -274,6 +322,22 @@ export function WishlistPage() {
       toast.success('Добавлено в список покупок');
     }
     setOpen(false);
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  const goToMultiExpense = () => {
+    if (selected.length === 0) {
+      toast.error('Выберите позиции');
+      return;
+    }
+    navigate(
+      `/expenses?new=1&kind=shop&wishlist=${selected.map(encodeURIComponent).join(',')}`,
+    );
   };
 
   const copyLink = async (url: string) => {
@@ -312,11 +376,17 @@ export function WishlistPage() {
     toast.success(WISHLIST_STATUS_LABELS[next]);
   };
 
-  const onUrlBlur = () => {
-    if (!form.store.trim() && form.url.trim()) {
-      const s = storeFromUrl(form.url);
-      if (s) setForm((f) => ({ ...f, store: s }));
-    }
+  const onOfferUrlBlur = (offerId: string) => {
+    setForm((f) => ({
+      ...f,
+      offers: f.offers.map((o) => {
+        if (o.id !== offerId) return o;
+        if (!o.store.trim() && o.url.trim()) {
+          return { ...o, store: storeFromUrl(o.url) };
+        }
+        return o;
+      }),
+    }));
   };
 
   return (
@@ -449,6 +519,26 @@ export function WishlistPage() {
             </Select>
           </div>
 
+          {selected.length > 0 && (
+            <div className="sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-30 flex flex-wrap items-center gap-2 rounded-2xl border border-primary/30 bg-primary/10 px-3 py-2 backdrop-blur">
+              <span className="text-sm font-medium">
+                Выбрано: {selected.length}
+              </span>
+              <Button size="sm" className="h-8" onClick={goToMultiExpense}>
+                <Wallet className="h-3.5 w-3.5" />
+                Один чек
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8"
+                onClick={() => setSelected([])}
+              >
+                Снять
+              </Button>
+            </div>
+          )}
+
           {filtered.length === 0 ? (
             <EmptyState
               icon={Package}
@@ -475,6 +565,8 @@ export function WishlistPage() {
                   line > 0 && paid > 0
                     ? Math.round((paid - line) * 100) / 100
                     : 0;
+                const compare = wishlistPriceCompare(item);
+                const isSelected = selected.includes(item.id);
 
                 return (
                   <Card
@@ -482,10 +574,18 @@ export function WishlistPage() {
                     className={cn(
                       'transition-opacity',
                       isDone && 'opacity-70',
+                      isSelected && 'ring-2 ring-primary/50',
                     )}
                   >
                     <CardContent className="p-4">
                       <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-2 h-4 w-4 shrink-0 accent-primary"
+                          checked={isSelected}
+                          onChange={() => toggleSelect(item.id)}
+                          title="В общий чек"
+                        />
                         <button
                           type="button"
                           title="Сменить статус"
@@ -736,6 +836,50 @@ export function WishlistPage() {
                             )}
                           </div>
 
+                          {compare && (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              Сравнение: {compare.count} цен · от{' '}
+                              {formatBr(compare.min)} до {formatBr(compare.max)}
+                              {' · '}
+                              <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                                экономия до {formatBr(compare.savings)}
+                              </span>
+                            </p>
+                          )}
+                          {(item.offers?.length ?? 0) > 1 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {item.offers.map((o) => {
+                                const oh = o.url ? normalizeUrl(o.url) : '';
+                                const isBest =
+                                  o.unitPrice > 0 &&
+                                  o.unitPrice === bestOfferPrice(item.offers);
+                                return (
+                                  <a
+                                    key={o.id}
+                                    href={oh || undefined}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={cn(
+                                      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
+                                      isBest
+                                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                                        : 'border-border text-muted-foreground',
+                                      !oh && 'pointer-events-none',
+                                    )}
+                                  >
+                                    {o.store || hostLabel(o.url) || 'магазин'}
+                                    {o.unitPrice > 0
+                                      ? ` · ${formatBr(o.unitPrice)}`
+                                      : ''}
+                                    {oh && (
+                                      <ExternalLink className="h-3 w-3 opacity-60" />
+                                    )}
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          )}
+
                           {item.note && (
                             <p className="mt-2 text-sm text-muted-foreground">
                               {item.note}
@@ -769,43 +913,104 @@ export function WishlistPage() {
                 autoFocus
               />
             </div>
-            <div className="grid gap-1.5">
-              <Label>Ссылка *</Label>
-              <Input
-                value={form.url}
-                onChange={(e) => setForm({ ...form, url: e.target.value })}
-                onBlur={onUrlBlur}
-                placeholder="https://… или onliner.by/…"
-                inputMode="url"
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Кликабельная ссылка на товар. Можно без https:// — добавится
-                сама.
-              </p>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Магазин / площадка</Label>
-              <Input
-                value={form.store}
-                onChange={(e) => setForm({ ...form, store: e.target.value })}
-                placeholder="Подставится из ссылки, можно изменить"
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="grid gap-1.5">
-                <Label>Цена, Br</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
-                  value={form.price}
-                  onChange={(e) => setForm({ ...form, price: e.target.value })}
-                  placeholder="0"
-                />
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label>Магазины / ссылки (сравнение цен)</Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      offers: [...f.offers, emptyOffer()],
+                    }))
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Ещё магазин
+                </Button>
               </div>
+              {form.offers.map((o, idx) => (
+                <div
+                  key={o.id}
+                  className="space-y-2 rounded-2xl border border-border p-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Вариант {idx + 1}
+                    </span>
+                    {form.offers.length > 1 && (
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() =>
+                          setForm((f) => ({
+                            ...f,
+                            offers: f.offers.filter((x) => x.id !== o.id),
+                          }))
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  <Input
+                    value={o.url}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        offers: f.offers.map((x) =>
+                          x.id === o.id ? { ...x, url: e.target.value } : x,
+                        ),
+                      }))
+                    }
+                    onBlur={() => onOfferUrlBlur(o.id)}
+                    placeholder="Ссылка https://…"
+                    inputMode="url"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      value={o.store}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          offers: f.offers.map((x) =>
+                            x.id === o.id
+                              ? { ...x, store: e.target.value }
+                              : x,
+                          ),
+                        }))
+                      }
+                      placeholder="Магазин"
+                    />
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={o.unitPrice}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          offers: f.offers.map((x) =>
+                            x.id === o.id
+                              ? { ...x, unitPrice: e.target.value }
+                              : x,
+                          ),
+                        }))
+                      }
+                      placeholder="Цена, Br"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
               <div className="grid gap-1.5">
                 <Label>Кол-во</Label>
                 <Input
@@ -838,19 +1043,28 @@ export function WishlistPage() {
                 </Select>
               </div>
             </div>
-            {(Number(form.price) > 0 || Number(form.quantity) > 0) && (
-              <p className="text-sm text-muted-foreground">
-                Итого:{' '}
-                <span className="font-semibold text-foreground">
-                  {formatBr(
-                    (Number(form.price) || 0) *
-                      (Number(form.quantity) > 0
-                        ? Number(form.quantity)
-                        : 1),
-                  )}
-                </span>
-              </p>
-            )}
+            {(() => {
+              const offers = form.offers.map((o) =>
+                normalizeOffer({
+                  id: o.id,
+                  url: o.url,
+                  store: o.store,
+                  unitPrice: Number(o.unitPrice) || 0,
+                }),
+              );
+              const best = bestOfferPrice(offers);
+              const q =
+                Number(form.quantity) > 0 ? Number(form.quantity) : 1;
+              if (best <= 0) return null;
+              return (
+                <p className="text-sm text-muted-foreground">
+                  Лучшая цена × кол-во:{' '}
+                  <span className="font-semibold text-foreground">
+                    {formatBr(best * q)}
+                  </span>
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-2">
               <div className="grid gap-1.5">
                 <Label>Статус</Label>
