@@ -16,12 +16,16 @@ import {
   expenseEstimateShare,
   getExpenseContractorIds,
   getExpenseEstimateIds,
+  getExpenseWishlistIds,
   getExpenseZoneIds,
   normalizeExpense,
 } from '../lib/expense';
 import { clearAppData, loadAppData, saveAppData } from '../lib/idb';
 import { todayISO, uid } from '../lib/utils';
-import { normalizeWishlistItem } from '../lib/wishlist';
+import {
+  getWishlistExpenseIds,
+  normalizeWishlistItem,
+} from '../lib/wishlist';
 import { getItemZoneIds, itemPlan } from '../lib/zones';
 
 interface AppState extends AppData {
@@ -60,7 +64,7 @@ interface AppState extends AppData {
 
   addExpense: (
     e: Omit<Expense, 'id' | 'createdAt'>,
-  ) => void;
+  ) => string;
   updateExpense: (id: string, patch: Partial<Expense>) => void;
   removeExpense: (id: string) => void;
 
@@ -366,32 +370,84 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     addExpense: (e) => {
+      const id = uid();
+      const expense = normalizeExpense({
+        ...e,
+        id,
+        createdAt: new Date().toISOString(),
+      } as Expense);
+      const linkedWishlist = new Set(getExpenseWishlistIds(expense));
+      const now = new Date().toISOString();
       apply({
-        expenses: [
-          ...get().expenses,
-          normalizeExpense({
-            ...e,
-            id: uid(),
-            createdAt: new Date().toISOString(),
-          } as Expense),
-        ],
+        expenses: [...get().expenses, expense],
+        wishlistItems: (get().wishlistItems ?? []).map((w) => {
+          if (!linkedWishlist.has(w.id)) return w;
+          const expenseIds = [
+            ...new Set([...getWishlistExpenseIds(w), id]),
+          ];
+          return normalizeWishlistItem({
+            ...w,
+            expenseIds,
+            status: 'bought',
+            updatedAt: now,
+          });
+        }),
       });
+      return id;
     },
     updateExpense: (id, patch) => {
+      const s = get();
+      const prev = s.expenses.find((e) => e.id === id);
+      if (!prev) return;
+
+      const merged = { ...prev, ...patch };
+      if ('estimateShares' in patch && patch.estimateShares == null) {
+        delete merged.estimateShares;
+      }
+      if ('wishlistItemIds' in patch && patch.wishlistItemIds == null) {
+        merged.wishlistItemIds = [];
+      }
+      const next = normalizeExpense(merged);
+      const oldW = new Set(getExpenseWishlistIds(prev));
+      const newW = new Set(getExpenseWishlistIds(next));
+      const now = new Date().toISOString();
+
       apply({
-        expenses: get().expenses.map((e) => {
-          if (e.id !== id) return e;
-          const next = { ...e, ...patch };
-          // Явный сброс ручного разнесения при auto-режиме
-          if ('estimateShares' in patch && patch.estimateShares == null) {
-            delete next.estimateShares;
+        expenses: s.expenses.map((e) => (e.id === id ? next : e)),
+        wishlistItems: (s.wishlistItems ?? []).map((w) => {
+          const was = oldW.has(w.id);
+          const is = newW.has(w.id);
+          if (!was && !is) return w;
+          let expenseIds = getWishlistExpenseIds(w);
+          if (was && !is) {
+            expenseIds = expenseIds.filter((x) => x !== id);
           }
-          return normalizeExpense(next);
+          if (is && !expenseIds.includes(id)) {
+            expenseIds = [...expenseIds, id];
+          }
+          return normalizeWishlistItem({
+            ...w,
+            expenseIds,
+            status: is ? 'bought' : w.status,
+            updatedAt: now,
+          });
         }),
       });
     },
     removeExpense: (id) => {
-      apply({ expenses: get().expenses.filter((e) => e.id !== id) });
+      const now = new Date().toISOString();
+      apply({
+        expenses: get().expenses.filter((e) => e.id !== id),
+        wishlistItems: (get().wishlistItems ?? []).map((w) => {
+          const expenseIds = getWishlistExpenseIds(w);
+          if (!expenseIds.includes(id)) return w;
+          return normalizeWishlistItem({
+            ...w,
+            expenseIds: expenseIds.filter((x) => x !== id),
+            updatedAt: now,
+          });
+        }),
+      });
     },
 
     addWishlistItem: (item) => {
@@ -425,6 +481,14 @@ export const useAppStore = create<AppState>((set, get) => {
     removeWishlistItem: (id) => {
       apply({
         wishlistItems: (get().wishlistItems ?? []).filter((w) => w.id !== id),
+        expenses: get().expenses.map((e) => {
+          const wids = getExpenseWishlistIds(e);
+          if (!wids.includes(id)) return e;
+          return normalizeExpense({
+            ...e,
+            wishlistItemIds: wids.filter((x) => x !== id),
+          });
+        }),
       });
     },
 

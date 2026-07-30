@@ -39,6 +39,14 @@ export function getExpenseEstimateIds(
   return asIds(e.estimateItemIds, e.estimateItemId);
 }
 
+/** Связанные позиции списка «К покупке» */
+export function getExpenseWishlistIds(
+  e: Pick<Expense, 'wishlistItemIds'>,
+): string[] {
+  if (!Array.isArray(e.wishlistItemIds)) return [];
+  return [...new Set(e.wishlistItemIds.filter(Boolean))];
+}
+
 /** Фото/вложения расхода (миграция с receiptPhoto) */
 export function getExpenseAttachments(
   e: Pick<Expense, 'attachments' | 'receiptPhoto'>,
@@ -268,6 +276,8 @@ export function normalizeExpense(e: Expense): Expense {
     if (Object.keys(cleaned).length > 0) estimateShares = cleaned;
   }
 
+  const wishlistItemIds = getExpenseWishlistIds(e);
+
   return {
     ...e,
     amount,
@@ -283,6 +293,7 @@ export function normalizeExpense(e: Expense): Expense {
     contractorId: contractorIds[0] ?? null,
     estimateItemIds,
     estimateItemId: estimateItemIds[0] ?? null,
+    wishlistItemIds,
     attachments,
     receiptPhoto: attachments[0] ?? null,
     estimateShares,

@@ -3,16 +3,18 @@ import {
   Camera,
   ChevronLeft,
   ChevronRight,
+  Link2,
   Paperclip,
   Pencil,
   Plus,
   Receipt,
   Search,
+  ShoppingBag,
   SplitSquareHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/PageHeader';
 import { Badge } from '../components/ui/badge';
@@ -53,12 +55,18 @@ import {
   getExpenseContractorIds,
   getExpenseEstimateIds,
   getExpenseStageIds,
+  getExpenseWishlistIds,
   getExpenseZoneIds,
   getPaymentParts,
   paymentPartsTotal,
   toggleId,
 } from '../lib/expense';
 import { compressImage, cn, formatDate } from '../lib/utils';
+import {
+  expenseCommentFromWishlist,
+  normalizeUrl,
+  wishlistLineTotal,
+} from '../lib/wishlist';
 import {
   getItemZoneIds,
   itemExpectedPaid,
@@ -91,6 +99,8 @@ type FormState = {
   categoryIds: string[];
   stageIds: string[];
   contractorIds: string[];
+  /** Связь с «К покупке» */
+  wishlistItemIds: string[];
   comment: string;
   /** Несколько фото чеков (data URL) */
   attachments: string[];
@@ -114,6 +124,7 @@ function emptyForm(): FormState {
     categoryIds: [],
     stageIds: [],
     contractorIds: [],
+    wishlistItemIds: [],
     comment: '',
     attachments: [],
     shareMode: 'auto',
@@ -200,6 +211,7 @@ export function ExpensesPage() {
   const contractors = useAppStore((s) => s.contractors);
   const estimateItems = useAppStore((s) => s.estimateItems);
   const expenses = useAppStore((s) => s.expenses);
+  const wishlistItems = useAppStore((s) => s.wishlistItems ?? []);
   const add = useAppStore((s) => s.addExpense);
   const update = useAppStore((s) => s.updateExpense);
   const remove = useAppStore((s) => s.removeExpense);
@@ -247,11 +259,68 @@ export function ExpensesPage() {
     setOpen(true);
   };
 
+  /** Prefill «покупки» из списка «К покупке» */
+  const openFromWishlist = (wishlistId: string) => {
+    const item = wishlistItems.find((w) => w.id === wishlistId);
+    if (!item) {
+      toast.error('Позиция из списка покупок не найдена');
+      openCreate('shop');
+      return;
+    }
+    const mat = categories.find((c) => /материал/i.test(c.name));
+    const finish =
+      stages.find((s) => /чистов/i.test(s.name)) ?? stages[0];
+    const line = wishlistLineTotal(item);
+    const zoneIds =
+      item.zoneIds.length > 0
+        ? item.zoneIds
+        : zones[0]
+          ? [zones[0].id]
+          : [];
+    const categoryIds = item.categoryId
+      ? [item.categoryId]
+      : mat
+        ? [mat.id]
+        : [];
+    setEditing(null);
+    setForm({
+      ...emptyForm(),
+      kind: 'shop',
+      zoneIds,
+      categoryIds,
+      stageIds: finish ? [finish.id] : [],
+      wishlistItemIds: [item.id],
+      comment: expenseCommentFromWishlist(item),
+      payCash: line > 0 ? String(Math.round(line * 100) / 100) : '',
+      payCard: '',
+      payTransfer: '',
+    });
+    setStep(0);
+    setOpen(true);
+    toast.message('Из списка покупок', {
+      description: item.name,
+    });
+  };
+
   useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (editId) {
+      const exp = expenses.find((e) => e.id === editId);
+      if (exp) {
+        openEdit(exp);
+      }
+      setSearchParams({}, { replace: true });
+      return;
+    }
     if (searchParams.get('new') === '1') {
-      const kind =
-        searchParams.get('kind') === 'shop' ? 'shop' : 'estimate';
-      openCreate(kind);
+      const wishlistId = searchParams.get('wishlist');
+      if (wishlistId) {
+        openFromWishlist(wishlistId);
+      } else {
+        const kind =
+          searchParams.get('kind') === 'shop' ? 'shop' : 'estimate';
+        openCreate(kind);
+      }
       setSearchParams({}, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- open once from query
@@ -370,6 +439,7 @@ export function ExpensesPage() {
       categoryIds: getExpenseCategoryIds(e),
       stageIds: getExpenseStageIds(e),
       contractorIds: getExpenseContractorIds(e),
+      wishlistItemIds: getExpenseWishlistIds(e),
       comment: e.comment,
       attachments: getExpenseAttachments(e),
       shareMode: hasManual ? 'manual' : 'auto',
@@ -649,6 +719,7 @@ export function ExpensesPage() {
       stageId: form.stageIds[0],
       contractorIds: form.contractorIds,
       contractorId: form.contractorIds[0] ?? null,
+      wishlistItemIds: form.wishlistItemIds,
       comment: form.comment.trim(),
       attachments: form.attachments,
       receiptPhoto: form.attachments[0] ?? null,
@@ -657,13 +728,29 @@ export function ExpensesPage() {
     };
     if (editing) {
       update(editing.id, payload);
-      toast.success('Расход обновлён');
+      toast.success(
+        form.wishlistItemIds.length > 0
+          ? 'Расход обновлён · связь с «К покупке»'
+          : 'Расход обновлён',
+      );
     } else {
       add(payload);
-      toast.success('Расход добавлен');
+      toast.success(
+        form.wishlistItemIds.length > 0
+          ? 'Расход добавлен · позиция отмечена купленной'
+          : 'Расход добавлен',
+      );
     }
     setOpen(false);
   };
+
+  const linkedWishlist = useMemo(
+    () =>
+      form.wishlistItemIds
+        .map((id) => wishlistItems.find((w) => w.id === id))
+        .filter(Boolean) as typeof wishlistItems,
+    [form.wishlistItemIds, wishlistItems],
+  );
 
   return (
     <div className="space-y-5">
@@ -850,6 +937,9 @@ export function ExpensesPage() {
             const eItems = getExpenseEstimateIds(e)
               .map((id) => estimateItems.find((i) => i.id === id))
               .filter(Boolean) as typeof estimateItems;
+            const eWishlist = getExpenseWishlistIds(e)
+              .map((id) => wishlistItems.find((w) => w.id === id))
+              .filter(Boolean) as typeof wishlistItems;
             const parts = getPaymentParts(e);
             const atts = getExpenseAttachments(e);
             const planMap = buildPlanByItemId(estimateItems);
@@ -873,6 +963,12 @@ export function ExpensesPage() {
                         ))}
                         {eItems.length === 0 && (
                           <Badge variant="warning">Вне сметы</Badge>
+                        )}
+                        {eWishlist.length > 0 && (
+                          <Badge variant="default">
+                            <ShoppingBag className="mr-1 h-3 w-3" />
+                            Из списка
+                          </Badge>
                         )}
                         {hasManual && (
                           <Badge variant="outline">
@@ -930,6 +1026,14 @@ export function ExpensesPage() {
                           <Badge key={c.id} variant="outline">
                             {c.name}
                           </Badge>
+                        ))}
+                        {eWishlist.map((w) => (
+                          <Link key={w.id} to="/wishlist">
+                            <Badge variant="outline" className="gap-1">
+                              <Link2 className="h-3 w-3" />
+                              {w.name}
+                            </Badge>
+                          </Link>
                         ))}
                       </div>
                       {atts.length > 0 && (
@@ -1046,6 +1150,57 @@ export function ExpensesPage() {
                     </span>
                   </button>
                 </div>
+
+                {linkedWishlist.length > 0 && (
+                  <div className="rounded-2xl border border-primary/25 bg-primary/5 px-3 py-2.5 text-sm">
+                    <div className="flex items-start gap-2">
+                      <ShoppingBag className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-primary">
+                          Связь с «К покупке»
+                        </p>
+                        <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                          {linkedWishlist.map((w) => (
+                            <li key={w.id} className="truncate">
+                              {w.name}
+                              {wishlistLineTotal(w) > 0
+                                ? ` · план ${formatBr(wishlistLineTotal(w))}`
+                                : ''}
+                              {w.url ? (
+                                <>
+                                  {' · '}
+                                  <a
+                                    href={normalizeUrl(w.url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-primary underline-offset-2 hover:underline"
+                                  >
+                                    ссылка
+                                  </a>
+                                </>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          После сохранения позиция будет отмечена как
+                          купленная.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        title="Отвязать"
+                        onClick={() =>
+                          setForm((f) => ({ ...f, wishlistItemIds: [] }))
+                        }
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {form.kind === 'estimate' ? (
                   <>
@@ -1554,6 +1709,12 @@ export function ExpensesPage() {
                     <Badge variant={form.kind === 'shop' ? 'warning' : 'default'}>
                       {form.kind === 'shop' ? 'Вне сметы' : 'По смете'}
                     </Badge>
+                    {linkedWishlist.length > 0 && (
+                      <Badge variant="default">
+                        <ShoppingBag className="mr-1 h-3 w-3" />
+                        Из списка
+                      </Badge>
+                    )}
                   </div>
                   <p className="mt-1 truncate text-muted-foreground">
                     {form.kind === 'estimate'

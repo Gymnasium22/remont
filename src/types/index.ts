@@ -128,6 +128,8 @@ export interface Expense {
    * Если задано и покрывает позиции — вместо пропорционального деления по плану.
    */
   estimateShares?: Record<string, number>;
+  /** Позиции «К покупке», к которым относится этот расход */
+  wishlistItemIds: string[];
   createdAt: string;
 }
 
@@ -162,6 +164,8 @@ export interface WishlistItem {
   priority: WishlistPriority;
   status: WishlistStatus;
   note: string;
+  /** Связанные расходы (оплаты этой покупки) */
+  expenseIds: string[];
   createdAt: string;
   updatedAt: string;
 }

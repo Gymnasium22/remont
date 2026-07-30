@@ -1,4 +1,10 @@
-import type { WishlistItem, WishlistPriority, WishlistStatus } from '../types';
+import type {
+  Expense,
+  WishlistItem,
+  WishlistPriority,
+  WishlistStatus,
+} from '../types';
+import { getExpenseWishlistIds } from './expense';
 import { uid } from './utils';
 
 const STATUSES: WishlistStatus[] = ['planned', 'ordered', 'bought'];
@@ -23,10 +29,51 @@ export function storeFromUrl(url: string): string {
   }
 }
 
-export function wishlistLineTotal(item: Pick<WishlistItem, 'price' | 'quantity'>): number {
+export function wishlistLineTotal(
+  item: Pick<WishlistItem, 'price' | 'quantity'>,
+): number {
   const q = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
   const p = Number(item.price) || 0;
   return p * q;
+}
+
+export function getWishlistExpenseIds(
+  item: Pick<WishlistItem, 'expenseIds'>,
+): string[] {
+  if (!Array.isArray(item.expenseIds)) return [];
+  return [...new Set(item.expenseIds.filter(Boolean))];
+}
+
+/** Расходы, связанные с позицией списка покупок */
+export function expensesForWishlistItem(
+  expenses: Expense[],
+  itemId: string,
+  item?: Pick<WishlistItem, 'expenseIds'>,
+): Expense[] {
+  const fromItem = new Set(item ? getWishlistExpenseIds(item) : []);
+  return expenses.filter(
+    (e) =>
+      fromItem.has(e.id) || getExpenseWishlistIds(e).includes(itemId),
+  );
+}
+
+export function wishlistPaidTotal(
+  expenses: Expense[],
+  item: WishlistItem,
+): number {
+  return expensesForWishlistItem(expenses, item.id, item).reduce(
+    (s, e) => s + e.amount,
+    0,
+  );
+}
+
+/** Комментарий расхода из позиции «К покупке» */
+export function expenseCommentFromWishlist(item: WishlistItem): string {
+  const parts = [item.name.trim()];
+  if (item.store?.trim()) parts.push(`(${item.store.trim()})`);
+  const base = parts.join(' ');
+  if (item.note?.trim()) return `${base}. ${item.note.trim()}`;
+  return base;
 }
 
 export function normalizeWishlistItem(
@@ -41,6 +88,9 @@ export function normalizeWishlistItem(
     : 'normal';
   const zoneIds = Array.isArray(raw.zoneIds)
     ? raw.zoneIds.filter((id): id is string => typeof id === 'string' && !!id)
+    : [];
+  const expenseIds = Array.isArray(raw.expenseIds)
+    ? [...new Set(raw.expenseIds.filter((id): id is string => !!id))]
     : [];
   const now = new Date().toISOString();
 
@@ -57,6 +107,7 @@ export function normalizeWishlistItem(
     priority,
     status,
     note: String(raw.note ?? ''),
+    expenseIds,
     createdAt: raw.createdAt || now,
     updatedAt: raw.updatedAt || now,
   };
