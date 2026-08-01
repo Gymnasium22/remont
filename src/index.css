@@ -101,3 +101,10 @@
 .recharts-text {
   fill: var(--color-muted-foreground) !important;
 }
+
+@media print {
+  header, .print\:hidden { display: none !important; }
+  body, #root { background: #fff !important; }
+  main { max-width: none !important; padding: 0 !important; }
+  .rounded-3xl { break-inside: avoid; }
+}

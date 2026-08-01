@@ -374,6 +374,9 @@ export function DashboardPage() {
         <QuickLink to="/materials" label="Склад" />
         <QuickLink to="/photos" label="Фото зон" />
         <QuickLink to="/calc" label="Что если…" />
+        <QuickLink to="/timeline" label="План-график" />
+        <QuickLink to="/insights" label="Анализ бюджета" />
+        <QuickLink to="/report" label="Отчёт PDF" />
         <QuickLink to="/settings" label="Проект и данные" />
       </div>
 

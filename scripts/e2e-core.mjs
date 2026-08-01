@@ -158,6 +158,14 @@ try {
     log(false, 'Ссылка фото');
   }
 
+  // Новые рабочие экраны
+  await page.goto(new URL('timeline', BASE).href, { waitUntil: 'networkidle' });
+  log((await page.locator('main').innerText()).includes('План-график'), 'План-график открыт');
+  await page.goto(new URL('insights', BASE).href, { waitUntil: 'networkidle' });
+  log((await page.locator('main').innerText()).includes('Анализ бюджета'), 'Анализ бюджета открыт');
+  await page.goto(new URL('report', BASE).href, { waitUntil: 'networkidle' });
+  log((await page.locator('main').innerText()).includes('Отчёт по ремонту'), 'Отчёт открыт');
+
   await page.screenshot({ path: 'test-e2e-core.png', fullPage: true });
   log(true, 'Скриншот test-e2e-core.png');
 } catch (e) {

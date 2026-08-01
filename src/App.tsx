@@ -36,6 +36,15 @@ const CalculatorPage = lazy(() =>
     default: m.CalculatorPage,
   })),
 );
+const TimelinePage = lazy(() =>
+  import('./pages/TimelinePage').then((m) => ({ default: m.TimelinePage })),
+);
+const InsightsPage = lazy(() =>
+  import('./pages/InsightsPage').then((m) => ({ default: m.InsightsPage })),
+);
+const ReportPage = lazy(() =>
+  import('./pages/ReportPage').then((m) => ({ default: m.ReportPage })),
+);
 
 /** HashRouter для GitHub Pages / Telegram; BrowserRouter если задан base с историей */
 const Router =
@@ -128,6 +137,9 @@ export default function App() {
               </Suspense>
             }
           />
+          <Route path="timeline" element={<Suspense fallback={<PageFallback />}><TimelinePage /></Suspense>} />
+          <Route path="insights" element={<Suspense fallback={<PageFallback />}><InsightsPage /></Suspense>} />
+          <Route path="report" element={<Suspense fallback={<PageFallback />}><ReportPage /></Suspense>} />
           <Route
             path="contractors"
             element={
