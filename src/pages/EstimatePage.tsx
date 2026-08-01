@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   ArrowDownWideNarrow,
+  CheckSquare2,
   ClipboardList,
   Copy,
   Filter,
@@ -8,9 +9,13 @@ import {
   Layers,
   Pencil,
   Plus,
+  Receipt,
   Search,
+  Square,
   Trash2,
+  X,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/PageHeader';
 import { ZoneChips } from './estimate/ZoneChips';
@@ -125,6 +130,7 @@ function extrasFromForm(extras: ExtraForm[]): EstimateExtra[] {
 }
 
 export function EstimatePage() {
+  const navigate = useNavigate();
   const zones = useAppStore((s) => s.zones);
   const categories = useAppStore((s) => s.categories);
   const stages = useAppStore((s) => s.stages);
@@ -159,6 +165,19 @@ export function EstimatePage() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeSelected, setMergeSelected] = useState<string[]>([]);
   const [mergeName, setMergeName] = useState('');
+
+  /** Мультиселект позиций */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const selectAllVisible = () =>
+    setSelectedIds(new Set(filtered.map((i) => i.id)));
+  const clearSelection = () => setSelectedIds(new Set());
 
   const itemMetrics = useMemo(() => {
     const map = new Map<
@@ -292,6 +311,12 @@ export function EstimatePage() {
     (s, i) => s + (itemMetrics.get(i.id)?.plan ?? 0),
     0,
   );
+  const selectedPlan = Array.from(selectedIds).reduce(
+    (sum, id) => sum + (itemMetrics.get(id)?.plan ?? 0),
+    0,
+  );
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((item) => selectedIds.has(item.id));
   const activeFilterCount = [
     filterZone !== 'all',
     filterCat !== 'all',
@@ -631,6 +656,55 @@ export function EstimatePage() {
             {formatBr(filteredPlan)}
           </p>
         )}
+
+        {filtered.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={allVisibleSelected ? clearSelection : selectAllVisible}
+            >
+              {allVisibleSelected ? (
+                <Square className="h-4 w-4" />
+              ) : (
+                <CheckSquare2 className="h-4 w-4" />
+              )}
+              {allVisibleSelected ? 'Снять выбор' : 'Выбрать показанные'}
+            </Button>
+            {selectedIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-primary/10 px-3 py-2 text-sm">
+                <span className="font-medium">
+                  Выбрано: {selectedIds.size} · {formatBr(selectedPlan)}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => {
+                    const ids = Array.from(selectedIds);
+                    navigate(
+                      `/expenses?new=1&estimateItems=${encodeURIComponent(ids.join(','))}`,
+                    );
+                  }}
+                >
+                  <Receipt className="h-4 w-4" />
+                  Создать оплату
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={clearSelection}
+                  title="Снять выбор"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -689,6 +763,7 @@ export function EstimatePage() {
                   const over = (m?.over ?? 0) > 0.01;
                   const selfPct = item.selfDonePercent ?? 0;
                   const extras = getItemExtras(item);
+                  const selected = selectedIds.has(item.id);
                   return (
                     <Card
                       key={item.id}
@@ -804,6 +879,19 @@ export function EstimatePage() {
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-col gap-1">
+                            <Button
+                              size="icon-sm"
+                              variant={selected ? 'secondary' : 'ghost'}
+                              onClick={() => toggleSelect(item.id)}
+                              title={selected ? 'Снять с выбора' : 'Выбрать для оплаты'}
+                              aria-pressed={selected}
+                            >
+                              {selected ? (
+                                <CheckSquare2 className="h-4 w-4" />
+                              ) : (
+                                <Square className="h-4 w-4" />
+                              )}
+                            </Button>
                             <Button
                               size="icon-sm"
                               variant="ghost"

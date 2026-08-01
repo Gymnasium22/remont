@@ -3,6 +3,8 @@ import {
   Camera,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  EyeOff,
   Link2,
   Paperclip,
   Pencil,
@@ -122,6 +124,7 @@ export function ExpensesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [form, setForm] = useState<FormState>(() => emptyForm());
+  const [showFullyPaid, setShowFullyPaid] = useState(false);
   /** 0 — смета, 1 — оплата, 2 — детали */
   const [step, setStep] = useState(0);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -132,6 +135,7 @@ export function ExpensesPage() {
 
   const openCreate = (kind: ExpenseKind = 'estimate') => {
     setEditing(null);
+    setShowFullyPaid(false);
     const base = emptyForm();
     if (kind === 'shop') {
       base.kind = 'shop';
@@ -146,6 +150,39 @@ export function ExpensesPage() {
       void del;
     }
     setForm(base);
+    setStep(0);
+    setOpen(true);
+  };
+
+  /** Prefill позиций из сметы */
+  const openFromEstimateItems = (itemIds: string[]) => {
+    const validItems = itemIds
+      .map((id) => estimateItems.find((i) => i.id === id))
+      .filter(Boolean) as typeof estimateItems;
+    if (validItems.length === 0) {
+      toast.error('Позиции сметы не найдены');
+      openCreate('estimate');
+      return;
+    }
+    const derived = deriveFromEstimateItems(
+      validItems.map((i) => i.id),
+      estimateItems,
+    );
+    const autoComment = autoCommentFromItems(
+      validItems.map((i) => i.id),
+      estimateItems,
+    );
+    setEditing(null);
+    setShowFullyPaid(false);
+    setForm({
+      ...emptyForm(),
+      kind: 'estimate',
+      estimateItemIds: validItems.map((i) => i.id),
+      zoneIds: derived.zoneIds,
+      categoryIds: derived.categoryIds,
+      stageIds: derived.stageIds,
+      comment: autoComment,
+    });
     setStep(0);
     setOpen(true);
   };
@@ -181,6 +218,7 @@ export function ExpensesPage() {
     ];
     if (categoryIds.length === 0 && mat) categoryIds.push(mat.id);
     setEditing(null);
+    setShowFullyPaid(false);
     setForm({
       ...emptyForm(),
       kind: 'shop',
@@ -220,12 +258,19 @@ export function ExpensesPage() {
     }
     if (searchParams.get('new') === '1') {
       const wishlistParam = searchParams.get('wishlist');
+      const estimateItemsParam = searchParams.get('estimateItems');
       if (wishlistParam) {
         const ids = wishlistParam
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
         openFromWishlist(ids);
+      } else if (estimateItemsParam) {
+        const ids = estimateItemsParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        openFromEstimateItems(ids);
       } else {
         const kind =
           searchParams.get('kind') === 'shop' ? 'shop' : 'estimate';
@@ -315,6 +360,7 @@ export function ExpensesPage() {
 
   const openEdit = (e: Expense) => {
     setEditing(e);
+    setShowFullyPaid(true);
     const parts = getPaymentParts(e);
     const estIds = getExpenseEstimateIds(e);
     const hasManual =
@@ -1106,25 +1152,58 @@ export function ExpensesPage() {
                       Оплата работ/позиций из сметы. Зоны и категории
                       подтянутся сами.
                     </p>
-                    <CheckList
-                      maxHeightClass="max-h-[min(36dvh,260px)]"
-                      items={estimateItems.map((i) => {
-                        const fact = selectItemFact(
-                          expenses,
-                          i.id,
-                          estimateItems,
-                        );
+                    {(() => {
+                      const allMapped = estimateItems.map((i) => {
+                        const fact = selectItemFact(expenses, i.id, estimateItems);
                         const remain = itemRemaining(i, fact);
-                        return {
-                          id: i.id,
-                          title: i.name,
-                          subtitle: `Остаток ${formatBr(remain)} · план ${formatBr(itemPlan(i))}`,
-                        };
-                      })}
-                      selected={form.estimateItemIds}
-                      onToggle={toggleEstimate}
-                      emptyLabel="Сначала добавьте позиции в смету"
-                    />
+                        return { item: i, fact, remain };
+                      });
+                      const fullyPaidCount = allMapped.filter(
+                        (x) => x.remain <= 0.01 && !form.estimateItemIds.includes(x.item.id),
+                      ).length;
+                      const visibleItems = allMapped
+                        .filter(
+                          (x) =>
+                            showFullyPaid ||
+                            x.remain > 0.01 ||
+                            form.estimateItemIds.includes(x.item.id),
+                        )
+                        .map((x) => ({
+                          id: x.item.id,
+                          title: x.item.name,
+                          subtitle:
+                            x.remain <= 0.01
+                              ? `✓ Оплачено · план ${formatBr(itemPlan(x.item))}`
+                              : `Остаток ${formatBr(x.remain)} · план ${formatBr(itemPlan(x.item))}`,
+                        }));
+                      return (
+                        <>
+                          {fullyPaidCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setShowFullyPaid((v) => !v)}
+                              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition"
+                            >
+                              {showFullyPaid ? (
+                                <EyeOff className="h-3.5 w-3.5" />
+                              ) : (
+                                <Eye className="h-3.5 w-3.5" />
+                              )}
+                              {showFullyPaid
+                                ? 'Скрыть оплаченные'
+                                : `Показать оплаченные (${fullyPaidCount})`}
+                            </button>
+                          )}
+                          <CheckList
+                            maxHeightClass="max-h-[min(36dvh,260px)]"
+                            items={visibleItems}
+                            selected={form.estimateItemIds}
+                            onToggle={toggleEstimate}
+                            emptyLabel="Сначала добавьте позиции в смету"
+                          />
+                        </>
+                      );
+                    })()}
                     {linkedToEstimate && (
                       <div className="space-y-2 rounded-2xl bg-muted/40 p-3">
                         <div className="flex flex-wrap gap-1.5">

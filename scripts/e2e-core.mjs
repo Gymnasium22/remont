@@ -15,7 +15,8 @@ const log = (ok, msg, detail = '') => {
 };
 
 async function openNav(page, name) {
-  await page.getByRole('link', { name: new RegExp(name) }).click();
+  // Навигация дублируется для широкого и мобильного экрана.
+  await page.getByRole('link', { name: new RegExp(name) }).first().click();
   await page.waitForTimeout(350);
 }
 
@@ -42,6 +43,8 @@ try {
   const nums = dlg.locator('input[type="number"]');
   await nums.nth(0).fill('2');
   await nums.nth(1).fill('50');
+  // В форме сметы сохранение находится на третьем шаге.
+  await dlg.getByRole('button', { name: /3\. Прогресс/ }).click();
   await dlg.getByRole('button', { name: 'Сохранить' }).click();
   await page.waitForTimeout(400);
   const estText = await page.locator('main').innerText();
