@@ -1,0 +1,1 @@
+function e(e,t){if(!Number.isFinite(e))return`0 Br`;let n=Math.round(e*100)/100;return t?.compact&&Math.abs(n)>=1e3?`${(n/1e3).toLocaleString(`ru-BY`,{maximumFractionDigits:1})} тыс. Br`:`${n.toLocaleString(`ru-BY`,{minimumFractionDigits:0,maximumFractionDigits:2})} Br`}export{e as t};
