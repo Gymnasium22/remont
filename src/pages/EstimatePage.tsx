@@ -49,7 +49,9 @@ import { uid } from '../lib/utils';
 import {
   formatZoneNames,
   getItemExtras,
+  getItemOrigin,
   getItemZoneIds,
+  itemBasePlan,
   itemDiyEconomy,
   itemExpectedPaid,
   itemExtrasPlan,
@@ -58,8 +60,8 @@ import {
   itemRemaining,
 } from '../lib/zones';
 import { selectItemFact, useAppStore } from '../store/useAppStore';
-import type { EstimateExtra, EstimateItem } from '../types';
-import { UNITS } from '../types';
+import type { EstimateExtra, EstimateItem, EstimateOrigin } from '../types';
+import { ESTIMATE_ORIGIN_LABELS, UNITS } from '../types';
 
 type ExtraForm = {
   id: string;
@@ -80,6 +82,7 @@ type FormState = {
   progress: string;
   selfDonePercent: string;
   extras: ExtraForm[];
+  origin: EstimateOrigin;
   note: string;
 };
 
@@ -87,6 +90,8 @@ const emptyForm = (
   zones: { id: string }[],
   cats: { id: string; name: string }[],
   stages: { id: string; name: string }[],
+  /** Если смета уже есть — новая позиция по умолчанию «по ходу» */
+  defaultOrigin: EstimateOrigin = 'original',
 ): FormState => {
   const works =
     cats.find((c) => /работ/i.test(c.name))?.id ?? cats[0]?.id ?? '';
@@ -103,6 +108,7 @@ const emptyForm = (
     progress: '0',
     selfDonePercent: '0',
     extras: [],
+    origin: defaultOrigin,
     note: '',
   };
 };
@@ -146,13 +152,15 @@ export function EstimatePage() {
   const [filterZone, setFilterZone] = useState<string>('all');
   const [filterCat, setFilterCat] = useState<string>('all');
   const [filterStage, setFilterStage] = useState<string>('all');
-  /** all | unpaid | overspend | in_progress | done */
+  /** all | unpaid | overspend | in_progress | done | extras | original | added */
   const [filterStatus, setFilterStatus] = useState<string>('all');
   /** none | zone | category | stage */
   const [groupBy, setGroupBy] = useState<string>('none');
   /** updated | name | plan | remain | progress | overspend */
   const [sortBy, setSortBy] = useState<string>('updated');
   const [showFilters, setShowFilters] = useState(false);
+  /** Показать только отмеченные чекбоксом позиции */
+  const [onlySelected, setOnlySelected] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<EstimateItem | null>(null);
   const [form, setForm] = useState<FormState>(() =>
@@ -173,11 +181,15 @@ export function EstimatePage() {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      if (next.size === 0) setOnlySelected(false);
       return next;
     });
   const selectAllVisible = () =>
     setSelectedIds(new Set(filtered.map((i) => i.id)));
-  const clearSelection = () => setSelectedIds(new Set());
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setOnlySelected(false);
+  };
 
   const itemMetrics = useMemo(() => {
     const map = new Map<
@@ -198,6 +210,7 @@ export function EstimatePage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = items.filter((i) => {
+      if (onlySelected && !selectedIds.has(i.id)) return false;
       if (filterZone !== 'all' && !itemHasZone(i, filterZone)) return false;
       if (filterCat !== 'all' && i.categoryId !== filterCat) return false;
       if (filterStage !== 'all' && i.stageId !== filterStage) return false;
@@ -207,10 +220,15 @@ export function EstimatePage() {
       if (filterStatus === 'in_progress' && (i.progress <= 0 || i.progress >= 100))
         return false;
       if (filterStatus === 'done' && i.progress < 100) return false;
+      if (filterStatus === 'extras' && getItemExtras(i).length === 0) return false;
+      if (filterStatus === 'original' && getItemOrigin(i) !== 'original')
+        return false;
+      if (filterStatus === 'added' && getItemOrigin(i) !== 'added') return false;
       if (!q) return true;
       return (
         i.name.toLowerCase().includes(q) ||
-        (i.note ?? '').toLowerCase().includes(q)
+        (i.note ?? '').toLowerCase().includes(q) ||
+        getItemExtras(i).some((ex) => ex.name.toLowerCase().includes(q))
       );
     });
 
@@ -244,6 +262,8 @@ export function EstimatePage() {
     filterStatus,
     sortBy,
     itemMetrics,
+    onlySelected,
+    selectedIds,
   ]);
 
   type GroupSection = { key: string; title: string; color?: string; items: EstimateItem[] };
@@ -306,7 +326,29 @@ export function EstimatePage() {
     return sections;
   }, [filtered, groupBy, zones, categories, stages]);
 
-  const totalPlan = items.reduce((s, i) => s + itemPlan(i), 0);
+  const totalBasePlan = items.reduce((s, i) => s + itemBasePlan(i), 0);
+  const totalExtrasPlan = items.reduce((s, i) => s + itemExtrasPlan(i), 0);
+  const totalPlan = totalBasePlan + totalExtrasPlan;
+  const itemsWithExtras = items.filter((i) => getItemExtras(i).length > 0).length;
+  /** План позиций из первоначальной сметы (база + допы к ним) */
+  const originalItemsPlan = items
+    .filter((i) => getItemOrigin(i) === 'original')
+    .reduce((s, i) => s + itemPlan(i), 0);
+  /** План новых позиций, добавленных по ходу */
+  const addedItemsPlan = items
+    .filter((i) => getItemOrigin(i) === 'added')
+    .reduce((s, i) => s + itemPlan(i), 0);
+  const originalCount = items.filter((i) => getItemOrigin(i) === 'original').length;
+  const addedCount = items.filter((i) => getItemOrigin(i) === 'added').length;
+  /** Рост плана «по ходу»: новые позиции + допы у любых позиций */
+  const growthFromProcess =
+    addedItemsPlan +
+    items
+      .filter((i) => getItemOrigin(i) === 'original')
+      .reduce((s, i) => s + itemExtrasPlan(i), 0);
+  const originalBaseOnly = items
+    .filter((i) => getItemOrigin(i) === 'original')
+    .reduce((s, i) => s + itemBasePlan(i), 0);
   const filteredPlan = filtered.reduce(
     (s, i) => s + (itemMetrics.get(i.id)?.plan ?? 0),
     0,
@@ -315,6 +357,14 @@ export function EstimatePage() {
     (sum, id) => sum + (itemMetrics.get(id)?.plan ?? 0),
     0,
   );
+  const selectedBase = Array.from(selectedIds).reduce((sum, id) => {
+    const item = items.find((i) => i.id === id);
+    return sum + (item ? itemBasePlan(item) : 0);
+  }, 0);
+  const selectedExtras = Array.from(selectedIds).reduce((sum, id) => {
+    const item = items.find((i) => i.id === id);
+    return sum + (item ? itemExtrasPlan(item) : 0);
+  }, 0);
   const allVisibleSelected =
     filtered.length > 0 && filtered.every((item) => selectedIds.has(item.id));
   const activeFilterCount = [
@@ -322,6 +372,7 @@ export function EstimatePage() {
     filterCat !== 'all',
     filterStage !== 'all',
     filterStatus !== 'all',
+    onlySelected,
   ].filter(Boolean).length;
 
   const toggleFormZone = (id: string) => {
@@ -337,7 +388,10 @@ export function EstimatePage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm(emptyForm(zones, categories, stages));
+    // Если смета уже начата — новые строки по умолчанию «по ходу»
+    const defaultOrigin: EstimateOrigin =
+      items.length > 0 ? 'added' : 'original';
+    setForm(emptyForm(zones, categories, stages, defaultOrigin));
     setEstStep(0);
     setOpen(true);
   };
@@ -361,6 +415,7 @@ export function EstimatePage() {
         unit: e.unit,
         unitPrice: String(e.unitPrice),
       })),
+      origin: getItemOrigin(item),
       note: item.note ?? '',
     });
     setEstStep(0);
@@ -410,6 +465,7 @@ export function EstimatePage() {
       progress,
       selfDonePercent,
       extras,
+      origin: form.origin === 'added' ? ('added' as const) : ('original' as const),
       note: form.note.trim() || undefined,
     };
     if (editing) {
@@ -481,12 +537,81 @@ export function EstimatePage() {
         }
       />
 
+      {items.length > 0 && (
+        <Card className="border-border/80 bg-card">
+          <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <p className="text-xs text-muted-foreground">
+                Изначально в смете
+              </p>
+              <p className="text-lg font-semibold tabular-nums">
+                {formatBr(originalBaseOnly)}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {originalCount} поз. · только база исходных
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">
+                Новые позиции по ходу
+              </p>
+              <p
+                className={cn(
+                  'text-lg font-semibold tabular-nums',
+                  addedItemsPlan > 0 && 'text-amber-600 dark:text-amber-400',
+                )}
+              >
+                {addedItemsPlan > 0
+                  ? `+${formatBr(addedItemsPlan)}`
+                  : formatBr(0)}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {addedCount > 0
+                  ? `${addedCount} поз. (отдельные работы)`
+                  : 'Метка «По ходу» при создании'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">
+                Допы к позициям
+              </p>
+              <p
+                className={cn(
+                  'text-lg font-semibold tabular-nums',
+                  totalExtrasPlan > 0 && 'text-amber-600 dark:text-amber-400',
+                )}
+              >
+                {totalExtrasPlan > 0
+                  ? `+${formatBr(totalExtrasPlan)}`
+                  : formatBr(0)}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {itemsWithExtras > 0
+                  ? `${itemsWithExtras} поз. с допработами`
+                  : 'Мешки, вывоз… во вкладке «Допы»'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Итого план</p>
+              <p className="text-lg font-semibold tabular-nums">
+                {formatBr(totalPlan)}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {growthFromProcess > 0
+                  ? `из них +${formatBr(growthFromProcess)} по ходу`
+                  : `исходные ${formatBr(originalItemsPlan)}`}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="space-y-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="pl-10"
-            placeholder="Поиск по смете…"
+            placeholder="Поиск по смете и допработам…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -496,8 +621,11 @@ export function EstimatePage() {
           {(
             [
               ['all', 'Все'],
+              ['original', 'Изначально'],
+              ['added', 'По ходу'],
               ['unpaid', 'Недоплата'],
               ['overspend', 'Перерасход'],
+              ['extras', 'С допами'],
               ['in_progress', 'В работе'],
               ['done', 'Готово'],
             ] as const
@@ -631,7 +759,7 @@ export function EstimatePage() {
                 ))}
               </div>
             </div>
-            {activeFilterCount > 0 && (
+            {(activeFilterCount > 0 || onlySelected) && (
               <Button
                 type="button"
                 variant="ghost"
@@ -642,6 +770,7 @@ export function EstimatePage() {
                   setFilterCat('all');
                   setFilterStage('all');
                   setFilterStatus('all');
+                  setOnlySelected(false);
                 }}
               >
                 Сбросить фильтры
@@ -654,6 +783,7 @@ export function EstimatePage() {
           <p className="text-xs text-muted-foreground">
             Показано {filtered.length} из {items.length} · план выборки{' '}
             {formatBr(filteredPlan)}
+            {onlySelected && ' · только выбранные'}
           </p>
         )}
 
@@ -674,10 +804,30 @@ export function EstimatePage() {
               {allVisibleSelected ? 'Снять выбор' : 'Выбрать показанные'}
             </Button>
             {selectedIds.size > 0 && (
-              <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-primary/10 px-3 py-2 text-sm">
+              <div className="flex w-full flex-wrap items-center gap-2 rounded-2xl bg-primary/10 px-3 py-2 text-sm sm:w-auto">
                 <span className="font-medium">
                   Выбрано: {selectedIds.size} · {formatBr(selectedPlan)}
                 </span>
+                {(selectedExtras > 0.01 || selectedBase > 0) && (
+                  <span className="text-xs text-muted-foreground">
+                    (база {formatBr(selectedBase)}
+                    {selectedExtras > 0.01
+                      ? ` + допы ${formatBr(selectedExtras)}`
+                      : ''}
+                    )
+                  </span>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={onlySelected ? 'secondary' : 'outline'}
+                  className="gap-1.5"
+                  onClick={() => setOnlySelected((v) => !v)}
+                  aria-pressed={onlySelected}
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  {onlySelected ? 'Показать все' : 'Только выбранные'}
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -696,7 +846,10 @@ export function EstimatePage() {
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  onClick={clearSelection}
+                  onClick={() => {
+                    clearSelection();
+                    setOnlySelected(false);
+                  }}
                   title="Снять выбор"
                 >
                   <X className="h-4 w-4" />
@@ -710,14 +863,34 @@ export function EstimatePage() {
       {filtered.length === 0 ? (
         <EmptyState
           icon={ClipboardList}
-          title={items.length === 0 ? 'Смета пуста' : 'Ничего не найдено'}
+          title={
+            items.length === 0
+              ? 'Смета пуста'
+              : onlySelected
+                ? 'Нет выбранных позиций'
+                : 'Ничего не найдено'
+          }
           description={
             items.length === 0
-              ? 'Добавьте плановые позиции. Одну позицию можно привязать сразу к нескольким зонам.'
-              : 'Попробуйте изменить фильтр или запрос.'
+              ? 'Добавьте плановые позиции. Одну позицию можно привязать сразу к нескольким зонам. Новые работы по ходу — вкладка «Допы», не меняя исходную цену.'
+              : onlySelected
+                ? 'Снимите фильтр «Только выбранные» или отметьте позиции галочкой.'
+                : 'Попробуйте изменить фильтр или запрос.'
           }
-          actionLabel={items.length === 0 ? 'Добавить позицию' : undefined}
-          onAction={items.length === 0 ? openCreate : undefined}
+          actionLabel={
+            items.length === 0
+              ? 'Добавить позицию'
+              : onlySelected
+                ? 'Показать все'
+                : undefined
+          }
+          onAction={
+            items.length === 0
+              ? openCreate
+              : onlySelected
+                ? () => setOnlySelected(false)
+                : undefined
+          }
         />
       ) : (
         <div className="space-y-5">
@@ -756,6 +929,7 @@ export function EstimatePage() {
                   const stage = stages.find((s) => s.id === item.stageId);
                   const m = itemMetrics.get(item.id);
                   const plan = m?.plan ?? itemPlan(item);
+                  const basePlan = itemBasePlan(item);
                   const extrasPlan = itemExtrasPlan(item);
                   const diy = itemDiyEconomy(item);
                   const fact = m?.fact ?? 0;
@@ -763,6 +937,7 @@ export function EstimatePage() {
                   const over = (m?.over ?? 0) > 0.01;
                   const selfPct = item.selfDonePercent ?? 0;
                   const extras = getItemExtras(item);
+                  const origin = getItemOrigin(item);
                   const selected = selectedIds.has(item.id);
                   return (
                     <Card
@@ -770,6 +945,10 @@ export function EstimatePage() {
                       className={cn(
                         'overflow-hidden',
                         over && 'border-red-500/30',
+                        selected && 'ring-2 ring-primary/40',
+                        origin === 'added' &&
+                          !selected &&
+                          'border-amber-500/25',
                       )}
                     >
                       <CardContent className="p-4">
@@ -779,6 +958,13 @@ export function EstimatePage() {
                               {item.name}
                             </h3>
                             <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              <Badge
+                                variant={
+                                  origin === 'added' ? 'warning' : 'outline'
+                                }
+                              >
+                                {ESTIMATE_ORIGIN_LABELS[origin]}
+                              </Badge>
                               {itemZones.map((zone) => (
                                 <Badge key={zone.id} variant="outline">
                                   <span
@@ -801,7 +987,7 @@ export function EstimatePage() {
                               )}
                               {extras.length > 0 && (
                                 <Badge variant="warning">
-                                  +{extras.length} допработ
+                                  +{extras.length} допработ · {formatBr(extrasPlan)}
                                 </Badge>
                               )}
                               {selfPct > 0 && (
@@ -814,10 +1000,19 @@ export function EstimatePage() {
                               )}
                             </div>
                             <p className="mt-2 text-sm text-muted-foreground">
-                              {item.quantity} {item.unit} ×{' '}
-                              {formatBr(item.unitPrice)}
+                              База {item.quantity} {item.unit} ×{' '}
+                              {formatBr(item.unitPrice)}{' '}
+                              <span className="text-foreground/80">
+                                ({formatBr(basePlan)})
+                              </span>
                               {extrasPlan > 0 && (
-                                <> + допы {formatBr(extrasPlan)}</>
+                                <>
+                                  {' '}
+                                  + допы{' '}
+                                  <span className="font-medium text-amber-600 dark:text-amber-400">
+                                    {formatBr(extrasPlan)}
+                                  </span>
+                                </>
                               )}{' '}
                               ={' '}
                               <span className="font-semibold text-foreground">
@@ -853,7 +1048,10 @@ export function EstimatePage() {
                               </span>
                             </p>
                             {extras.length > 0 && (
-                              <ul className="mt-2 space-y-1 rounded-2xl bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                              <ul className="mt-2 space-y-1 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+                                <li className="mb-0.5 font-medium text-amber-700 dark:text-amber-400">
+                                  Добавлено по ходу ремонта
+                                </li>
                                 {extras.map((ex) => (
                                   <li
                                     key={ex.id}
@@ -868,6 +1066,10 @@ export function EstimatePage() {
                                     </span>
                                   </li>
                                 ))}
+                                <li className="flex justify-between gap-2 border-t border-amber-500/15 pt-1 font-medium text-foreground">
+                                  <span>Итого допов</span>
+                                  <span>{formatBr(extrasPlan)}</span>
+                                </li>
                               </ul>
                             )}
                             <div className="mt-3">
@@ -979,6 +1181,37 @@ export function EstimatePage() {
                   />
                 </div>
                 <div className="grid gap-1.5">
+                  <Label>Когда появилась позиция</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        ['original', 'Изначально в смете'],
+                        ['added', 'Добавили по ходу'],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setForm({ ...form, origin: id })}
+                        className={cn(
+                          'rounded-full px-3 py-1.5 text-xs font-medium transition',
+                          form.origin === id
+                            ? id === 'added'
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Отдельная новая работа — «По ходу». Доп. к уже существующей
+                    позиции (мешки, вывоз) — вкладка «Допы».
+                  </p>
+                </div>
+                <div className="grid gap-1.5">
                   <Label>Зоны</Label>
                   <ZoneChips
                     zones={zones}
@@ -1085,8 +1318,13 @@ export function EstimatePage() {
 
             {estStep === 1 && (
               <div className="grid gap-3">
-                <p className="text-sm text-muted-foreground">
-                  Допработы по ходу: мешки, вынос, вывоз. Увеличивают план.
+                <p className="rounded-2xl border border-border bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    Не меняйте цену основы
+                  </span>
+                  , если прораб добавил мешки, вывоз, доп. объём — внесите это
+                  сюда. Тогда видно, сколько было заложено изначально и на
+                  сколько вырос план. Оплата сверх базы+допов = перерасход.
                 </p>
                 <Button
                   type="button"
@@ -1200,17 +1438,31 @@ export function EstimatePage() {
                     ))}
                   </div>
                 )}
-                <p className="text-sm font-medium tabular-nums">
-                  План с допами:{' '}
-                  {formatBr(
+                {(() => {
+                  const base =
                     (Number(form.quantity) || 0) *
-                      (Number(form.unitPrice) || 0) +
-                      extrasFromForm(form.extras).reduce(
-                        (s, e) => s + e.quantity * e.unitPrice,
-                        0,
-                      ),
-                  )}
-                </p>
+                    (Number(form.unitPrice) || 0);
+                  const extrasSum = extrasFromForm(form.extras).reduce(
+                    (s, e) => s + e.quantity * e.unitPrice,
+                    0,
+                  );
+                  return (
+                    <div className="space-y-1 rounded-2xl bg-muted/40 px-3 py-2.5 text-sm tabular-nums">
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Исходная позиция</span>
+                        <span>{formatBr(base)}</span>
+                      </div>
+                      <div className="flex justify-between text-amber-600 dark:text-amber-400">
+                        <span>Допработы</span>
+                        <span>+{formatBr(extrasSum)}</span>
+                      </div>
+                      <div className="flex justify-between border-t border-border pt-1 font-semibold text-foreground">
+                        <span>Итого план</span>
+                        <span>{formatBr(base + extrasSum)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 

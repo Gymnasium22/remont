@@ -14,6 +14,7 @@ const item = (
   progress: 0,
   selfDonePercent: 0,
   extras: [],
+  origin: 'original',
   createdAt: '',
   updatedAt: '',
   ...partial,

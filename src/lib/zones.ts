@@ -1,4 +1,23 @@
-import type { EstimateExtra, EstimateItem } from '../types';
+import type { EstimateExtra, EstimateItem, EstimateOrigin } from '../types';
+
+/** Происхождение позиции (старые данные без поля = изначально) */
+export function getItemOrigin(
+  item: Pick<EstimateItem, 'origin'> | { origin?: EstimateOrigin },
+): EstimateOrigin {
+  return item.origin === 'added' ? 'added' : 'original';
+}
+
+export function isOriginalItem(
+  item: Pick<EstimateItem, 'origin'> | { origin?: EstimateOrigin },
+): boolean {
+  return getItemOrigin(item) === 'original';
+}
+
+export function isAddedItem(
+  item: Pick<EstimateItem, 'origin'> | { origin?: EstimateOrigin },
+): boolean {
+  return getItemOrigin(item) === 'added';
+}
 
 /** Нормализация зон позиции (поддержка старого zoneId) */
 export function getItemZoneIds(item: Pick<EstimateItem, 'zoneIds' | 'zoneId'>): string[] {

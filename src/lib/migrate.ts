@@ -14,6 +14,7 @@ import { getItemZoneIds } from './zones';
 function normalizeEstimateItems(raw: EstimateItem[] | undefined): EstimateItem[] {
   return (raw ?? []).map((item) => {
     const zoneIds = getItemZoneIds(item);
+    const origin = item.origin === 'added' ? 'added' : 'original';
     return {
       ...item,
       zoneIds,
@@ -23,6 +24,8 @@ function normalizeEstimateItems(raw: EstimateItem[] | undefined): EstimateItem[]
         Math.max(0, Number(item.selfDonePercent) || 0),
       ),
       extras: Array.isArray(item.extras) ? item.extras : [],
+      // Уже существующие позиции без поля считаем первоначальной сметой
+      origin,
     };
   });
 }

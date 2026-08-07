@@ -73,11 +73,13 @@ describe('useAppStore', () => {
       progress: 0,
       selfDonePercent: 0,
       extras: [],
+      origin: 'original',
     });
 
     const items = useAppStore.getState().estimateItems;
     expect(items).toHaveLength(1);
     expect(itemPlan(items[0])).toBe(250);
+    expect(items[0].origin).toBe('original');
   });
 
   it('links expense to wishlist and marks bought', () => {
@@ -147,6 +149,7 @@ describe('useAppStore', () => {
       progress: 0,
       selfDonePercent: 0,
       extras: [],
+      origin: 'original',
     });
     useAppStore.getState().addEstimateItem({
       name: 'B',
@@ -159,6 +162,7 @@ describe('useAppStore', () => {
       progress: 0,
       selfDonePercent: 0,
       extras: [],
+      origin: 'added',
     });
 
     const [a, b] = useAppStore.getState().estimateItems;

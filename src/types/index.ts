@@ -51,6 +51,19 @@ export interface EstimateExtra {
   note?: string;
 }
 
+/**
+ * Происхождение позиции сметы:
+ * - original — была в первоначальной смете
+ * - added — новая позиция, появившаяся в процессе ремонта
+ *   (не доп. к существующей, а отдельная работа)
+ */
+export type EstimateOrigin = 'original' | 'added';
+
+export const ESTIMATE_ORIGIN_LABELS: Record<EstimateOrigin, string> = {
+  original: 'Изначально',
+  added: 'По ходу',
+};
+
 export interface EstimateItem {
   id: string;
   name: string;
@@ -79,6 +92,11 @@ export interface EstimateItem {
    * (мешки, вынос, вывоз мусора и т.п.). Входят в план позиции.
    */
   extras: EstimateExtra[];
+  /**
+   * Изначально в смете или добавлена по ходу ремонта.
+   * Старые данные без поля → original при миграции.
+   */
+  origin: EstimateOrigin;
   note?: string;
   createdAt: string;
   updatedAt: string;

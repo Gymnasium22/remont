@@ -33,8 +33,11 @@ import {
   paymentAmountByMethod,
 } from '../lib/expense';
 import {
+  getItemOrigin,
+  itemBasePlan,
   itemDiyEconomy,
   itemExpectedPaid,
+  itemExtrasPlan,
   itemHasZone,
   itemPlan,
   zoneShare,
@@ -54,7 +57,18 @@ export function DashboardPage() {
   const estimateItems = useAppStore((s) => s.estimateItems);
   const expenses = useAppStore((s) => s.expenses);
 
-  const plan = estimateItems.reduce((sum, i) => sum + itemPlan(i), 0);
+  const planBase = estimateItems.reduce((sum, i) => sum + itemBasePlan(i), 0);
+  const planExtras = estimateItems.reduce(
+    (sum, i) => sum + itemExtrasPlan(i),
+    0,
+  );
+  const plan = planBase + planExtras;
+  const planOriginalBase = estimateItems
+    .filter((i) => getItemOrigin(i) === 'original')
+    .reduce((sum, i) => sum + itemBasePlan(i), 0);
+  const planAddedItems = estimateItems
+    .filter((i) => getItemOrigin(i) === 'added')
+    .reduce((sum, i) => sum + itemPlan(i), 0);
   /** Все траты (смета + покупки в магазине) */
   const fact = expenses.reduce((sum, e) => sum + e.amount, 0);
   /** Только оплаты по позициям сметы (без «Покупка») */
@@ -231,7 +245,15 @@ export function DashboardPage() {
           <KpiCard
             label="План сметы"
             value={formatBr(plan)}
-            hint="Работы и допработы"
+            hint={
+              planAddedItems > 0 || planExtras > 0
+                ? `Изначально ${formatBr(planOriginalBase)}${
+                    planAddedItems > 0
+                      ? ` · +поз. ${formatBr(planAddedItems)}`
+                      : ''
+                  }${planExtras > 0 ? ` · +допы ${formatBr(planExtras)}` : ''}`
+                : 'Исходные работы (новые — «По ходу»)'
+            }
             tone="neutral"
           />
           <KpiCard
